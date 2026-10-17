@@ -173,3 +173,111 @@ class Game {
           add(r, c + 1);
         }
         break;
+    }
+    return res;
+  }
+
+  bool hasKing(Side s) {
+    for (final row in b) {
+      for (final p in row) {
+        if (p != null && p.type == PType.king && p.side == s) return true;
+      }
+    }
+    return false;
+  }
+
+  bool inCheck(Side s) {
+    var kr = -1, kc = -1, er = -1, ec = -1;
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = b[r][c];
+        if (p != null && p.type == PType.king) {
+          if (p.side == s) {
+            kr = r;
+            kc = c;
+          } else {
+            er = r;
+            ec = c;
+          }
+        }
+      }
+    }
+    if (kr < 0) return true;
+    if (er >= 0 && ec == kc) {
+      var blocked = false;
+      for (var r = min(kr, er) + 1; r < max(kr, er); r++) {
+        if (b[r][kc] != null) {
+          blocked = true;
+          break;
+        }
+      }
+      if (!blocked) return true;
+    }
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = b[r][c];
+        if (p != null && p.side != s) {
+          for (final m in pseudoMoves(r, c)) {
+            if (m.tr == kr && m.tc == kc) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  List<Move> legalMoves(int r, int c) {
+    final p = b[r][c];
+    if (p == null) return [];
+    return pseudoMoves(r, c).where((m) {
+      final cap = b[m.tr][m.tc];
+      b[m.tr][m.tc] = p;
+      b[m.fr][m.fc] = null;
+      final bad = inCheck(p.side);
+      b[m.fr][m.fc] = p;
+      b[m.tr][m.tc] = cap;
+      return !bad;
+    }).toList();
+  }
+
+  bool hasLegalMove(Side s) {
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = b[r][c];
+        if (p != null && p.side == s && legalMoves(r, c).isNotEmpty) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool play(Move m, {bool strict = true}) {
+    final p = b[m.fr][m.fc];
+    if (p == null) return false;
+    if (strict) {
+      if (p.side != turn) return false;
+      final ok = legalMoves(m.fr, m.fc)
+          .any((x) => x.tr == m.tr && x.tc == m.tc);
+      if (!ok) return false;
+    } else {
+      if (m.fr == m.tr && m.fc == m.tc) return false;
+      final t = b[m.tr][m.tc];
+      if (t != null && t.side == p.side) return false;
+    }
+    final cap = b[m.tr][m.tc];
+    history.add(MoveRecord(m, cap, turn));
+    b[m.tr][m.tc] = p;
+    b[m.fr][m.fc] = null;
+    turn = p.side.other;
+    return true;
+  }
+
+  void undo() {
+    if (history.isEmpty) return;
+    final h = history.removeLast();
+    b[h.move.fr][h.move.fc] = b[h.move.tr][h.move.tc];
+    b[h.move.tr][h.move.tc] = h.captured;
+    turn = h.prevTurn;
+  }
+}
