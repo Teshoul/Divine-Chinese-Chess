@@ -12,17 +12,14 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - name: Create android project, keep my code
+      - name: Generate android folder only
         run: |
-          cp -r lib /tmp/lib_backup
-          cp pubspec.yaml /tmp/pubspec_backup.yaml
-          flutter create --platforms=android .
-          rm -rf lib
-          cp -r /tmp/lib_backup lib
-          cp /tmp/pubspec_backup.yaml pubspec.yaml
+          flutter create --platforms=android --project-name chess_app /tmp/gen
+          cp -r /tmp/gen/android ./android
+      - run: cat lib/main.dart
       - run: flutter pub get
       - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
-          name: app
+          name: chess-apk-v2
           path: build/app/outputs/flutter-apk/app-release.apk
