@@ -5,8 +5,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'blind_page.dart';
 import 'blind_setup.dart';
 import 'fx.dart';
+import 'liquid.dart';
 import 'lobby.dart';
 import 'mode_setup.dart';
+import 'music.dart';
 import 'profile.dart';
 import 'settings.dart';
 import 'settings_page.dart';
@@ -76,7 +78,7 @@ class ChessApp extends StatelessWidget {
       animation: app,
       builder: (context, _) {
         return MaterialApp(
-          title: '象棋',
+          title: '神的象棋',
           debugShowCheckedModeBanner: false,
           locale: Locale(const ['zh', 'en', 'ja', 'ru'][app.lang]),
           supportedLocales: const [Locale('zh'), Locale('en'), Locale('ja'), Locale('ru')],
@@ -258,36 +260,43 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   Widget _tile(int i, Rect r) {
     final color = app.preset.tiles[i];
-    final ink = inkOn(color);
+    final divine = app.divine;
+    final ink = divine ? Colors.white : inkOn(color);
+    final sub = divine ? Colors.white70 : inkSub(color);
     final rad = app.cardR + (app.glass ? 10 : 4);
-    return Positioned.fromRect(
-      rect: r,
-      child: DecoratedBox(
-        decoration: app.glass ? _glassDeco(color, rad) : styled(color, r: rad),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: FittedBox(
-            fit: BoxFit.contain,
-            child: SizedBox(
-              width: 130,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(_icons[i], size: 44, color: ink),
-                  const SizedBox(height: 10),
-                  Text(tr(_names[i]),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: ink, fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
-                  Text(tr(_subs[i]),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: inkSub(color), fontSize: 12)),
-                ],
-              ),
-            ),
+    final shadows = divine ? const [Shadow(color: Color(0xAA000000), blurRadius: 6)] : null;
+    final content = Padding(
+      padding: const EdgeInsets.all(12),
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: 130,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(_icons[i], size: 44, color: ink),
+              const SizedBox(height: 10),
+              Text(tr(_names[i]),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: ink, fontSize: 18, fontWeight: FontWeight.bold, shadows: shadows)),
+              const SizedBox(height: 4),
+              Text(tr(_subs[i]),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: sub, fontSize: 12, shadows: shadows)),
+            ],
           ),
         ),
       ),
+    );
+    return Positioned.fromRect(
+      rect: r,
+      child: divine
+          ? LiquidFill(radius: rad, phase: i * 3.1, child: content)
+          : DecoratedBox(
+              decoration: app.glass ? _glassDeco(color, rad) : styled(color, r: rad),
+              child: content,
+            ),
     );
   }
 
@@ -326,9 +335,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 Rect.fromLTWH(0, h0 + _gap, w0, h1),
                 Rect.fromLTWH(w0 + _gap, h0 + _gap, w1, h1),
               ];
-              return Stack(
-                children: [for (var i = 0; i < 4; i++) _tile(i, rects[i])],
-              );
+              return Stack(children: [for (var i = 0; i < 4; i++) _tile(i, rects[i])]);
             },
           ),
         ),
@@ -365,6 +372,31 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
+  Widget _roundBtn(IconData icon, VoidCallback onTap, double phase) {
+    if (app.divine) {
+      return GestureDetector(
+        onTap: onTap,
+        child: SizedBox(
+          width: 58,
+          height: 58,
+          child: LiquidFill(
+            radius: 29,
+            phase: phase,
+            child: Center(child: Icon(icon, color: Colors.white, size: 28)),
+          ),
+        ),
+      );
+    }
+    return PressBox(
+      color: app.primary,
+      r: app.uiStyle == 1 ? 8 : 29,
+      width: 58,
+      height: 58,
+      onTap: onTap,
+      child: Icon(icon, color: inkOn(app.primary), size: 28),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -394,16 +426,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         }),
                       ),
                       Positioned(
+                        left: 20,
+                        bottom: 20,
+                        child: AnimatedBuilder(
+                          animation: MusicService.I,
+                          builder: (context, _) => _roundBtn(
+                            MusicService.I.playing ? Icons.graphic_eq : Icons.music_note,
+                            () => Navigator.push(context, revealRoute(const MusicPage())),
+                            2.0,
+                          ),
+                        ),
+                      ),
+                      Positioned(
                         right: 20,
                         bottom: 20,
-                        child: PressBox(
-                          color: app.primary,
-                          r: app.uiStyle == 1 ? 8 : 29,
-                          width: 58,
-                          height: 58,
-                          onTap: () =>
-                              Navigator.push(context, revealRoute(const SettingsPage())),
-                          child: Icon(Icons.settings, color: inkOn(app.primary), size: 28),
+                        child: _roundBtn(
+                          Icons.settings,
+                          () => Navigator.push(context, revealRoute(const SettingsPage())),
+                          0.0,
                         ),
                       ),
                     ],
