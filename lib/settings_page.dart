@@ -4,6 +4,7 @@ import 'fx.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'extras.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -165,7 +166,7 @@ class SettingsPage extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
             children: [
               _sec(context, '主题',
-                  Wrap(spacing: 10, runSpacing: 10, children: [for (final p in kPresets) _preset(context, p)])),
+                  Wrap(spacing: 10, runSpacing: 10, children: [for (final p in app.presets) _preset(context, p)])),
               _sec(
                 context,
                 '显示模式',
@@ -278,12 +279,13 @@ class SettingsPage extends StatelessWidget {
                 '自定义图片',
                 Column(
                   children: [
-                    _nav(context, '全局背景（所有页面）', 'global'),
+                    _nav(context, '全局背景', 'global'),
                     _nav(context, '主菜单图片', 'home'),
                     _nav(context, '对局页图片', 'game'),
                   ],
                 ),
               ),
+              const ExtrasSections(),
               _sec(
                 context,
                 '关于',
@@ -292,11 +294,11 @@ class SettingsPage extends StatelessWidget {
                   children: [
                     Text(tr('作者：Teshoul（刘小壮）')),
                     const SizedBox(height: 6),
-                    Text(tr('本应用由 Claude 创作')),
+                    Text(tr('本应用由 Claude 辅助创作')),
                     const SizedBox(height: 6),
-                    Text(tr('开源仓库：暂无，敬请期待')),
+                    Text(tr('开源仓库： https://github.com/Teshoul/Divine-Chinese-Chess')),
                     const SizedBox(height: 6),
-                    Text('${tr('版本')} 1.0.0'),
+                    Text('${tr('版本')} 1.2.0'),
                   ],
                 ),
               ),
