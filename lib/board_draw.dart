@@ -193,8 +193,8 @@ void drawTray(Canvas canvas, double cell, double y, Side side, List<Piece> dead,
           ..strokeWidth = dark ? 0.7 : 1.6);
     labelCol = Colors.white70;
   }
-  drawText(canvas, '${isRed ? '红' : '黑'}方\n阵亡', Offset(cell * 0.75, y + cell * 0.5),
-      cell * 0.26, labelCol);
+  drawText(canvas, tr(isRed ? '红方\n阵亡' : '黑方\n阵亡'),
+      Offset(cell * 0.75, y + cell * 0.5), cell * 0.26, labelCol);
   for (var i = 0; i < dead.length; i++) {
     final ctr = Offset(cell * 1.55 + i * cell * 0.46, y + cell * 0.5);
     final isNew = i == fresh;
