@@ -1,33 +1,63 @@
 import 'package:flutter/material.dart';
 import 'engine.dart';
+import 'board_draw.dart';
+import 'match_info.dart';
+import 'ui.dart';
 
 class GamePage extends StatefulWidget {
   final bool free;
-  const GamePage({super.key, required this.free});
+  final MatchInfo? match;
+  const GamePage({super.key, required this.free, this.match});
 
   @override
   State<GamePage> createState() => _GamePageState();
 }
 
-class _GamePageState extends State<GamePage> {
+class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   final game = Game();
   int? sr, sc;
   List<Move> hints = [];
   Move? last;
+  bool lastCap = false;
   bool flip = false;
   bool strict = true;
+  bool lost = false;
   String? over;
+  late final AnimationController _ac;
+  late final AnimationController _pulse;
+
+  MatchInfo? get m => widget.match;
+  bool get online => m != null;
+  Side? get mySide =>
+      m == null ? null : (m!.first ? Side.red : Side.black);
 
   @override
   void initState() {
     super.initState();
     strict = !widget.free;
+    _ac = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 420))
+      ..value = 1;
+    _pulse = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900))
+      ..repeat(reverse: true);
+    if (online) {
+      flip = mySide == Side.black;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) m!.link.handler = _onNet;
+      });
+    }
   }
 
-  String get status {
-    if (over != null) return over!;
-    final chk = strict && game.inCheck(game.turn);
-    return '${game.turn.cn}走棋${chk ? ' · 将军！' : ''}';
+  @override
+  void dispose() {
+    _ac.dispose();
+    _pulse.dispose();
+    if (online) {
+      m!.link.handler = null;
+      m!.link.close();
+    }
+    super.dispose();
   }
 
   void clearSel() {
@@ -36,10 +66,44 @@ class _GamePageState extends State<GamePage> {
     hints = [];
   }
 
+  void _reset() {
+    game.reset();
+    last = null;
+    lastCap = false;
+    over = null;
+    clearSel();
+    _ac.value = 1;
+  }
+
+  void _onNet(Map<String, dynamic> msg) {
+    if (!mounted) return;
+    final t = msg['type'];
+    setState(() {
+      if (t == 'move') {
+        final mv = Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int,
+            msg['tc'] as int);
+        final cap = game.b[mv.tr][mv.tc] != null;
+        if (game.play(mv, strict: false)) {
+          last = mv;
+          lastCap = cap;
+          clearSel();
+          checkOver();
+          _ac.forward(from: 0);
+        }
+      } else if (t == 'restart') {
+        _reset();
+      } else if (t == 'closed') {
+        lost = true;
+      }
+    });
+  }
+
   void select(int r, int c) {
     final p = game.b[r][c];
     setState(() {
-      if (p == null || (strict && p.side != game.turn)) {
+      if (p == null ||
+          (strict && p.side != game.turn) ||
+          (online && p.side != mySide)) {
         clearSel();
         return;
       }
@@ -62,7 +126,8 @@ class _GamePageState extends State<GamePage> {
   }
 
   void onTap(int r, int c) {
-    if (over != null) return;
+    if (over != null || lost) return;
+    if (online && game.turn != mySide) return;
     final p = game.b[r][c];
     if (sr != null) {
       final from = game.b[sr!][sc!];
@@ -70,13 +135,20 @@ class _GamePageState extends State<GamePage> {
         select(r, c);
         return;
       }
-      final m = Move(sr!, sc!, r, c);
-      if (game.play(m, strict: strict)) {
+      final mv = Move(sr!, sc!, r, c);
+      final cap = p != null;
+      if (game.play(mv, strict: strict)) {
+        if (online) {
+          m!.link.send(
+              {'type': 'move', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
+        }
         setState(() {
-          last = m;
+          last = mv;
+          lastCap = cap;
           clearSel();
           checkOver();
         });
+        _ac.forward(from: 0);
       } else {
         setState(clearSel);
       }
@@ -89,32 +161,64 @@ class _GamePageState extends State<GamePage> {
     setState(() {
       game.undo();
       last = game.history.isEmpty ? null : game.history.last.move;
+      lastCap = false;
       over = null;
       clearSel();
-    });
-  }
-
-  void restart() {
-    setState(() {
-      game.reset();
-      last = null;
-      over = null;
-      clearSel();
+      _ac.value = 1;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    Side? chk;
+    String msg;
+    if (over != null) {
+      msg = over!;
+    } else if (lost) {
+      msg = '对方已断开连接';
+    } else if (chk != null) {
+      msg = '${chk.cn}被将军！';
+    } else if (online) {
+      msg = game.turn == mySide ? '轮到你走棋' : '等待对方走棋…';
+    } else {
+      msg = '${game.turn.cn}走棋';
+    }
+    final title = widget.free ? '自由模式' : '标准对局';
+
     return Scaffold(
-      appBar: AppBar(title: Text(widget.free ? '自由模式' : '普通对局')),
+      appBar: AppBar(title: Text(online ? '$title · 联机' : title)),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(status,
-                  style: const TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                sideTag(context, Side.black,
+                    active: over == null && game.turn == Side.black,
+                    mine: online && mySide == Side.black),
+                const SizedBox(width: 12),
+                sideTag(context, Side.red,
+                    active: over == null && game.turn == Side.red,
+                    mine: online && mySide == Side.red),
+              ],
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              transitionBuilder: (c, a) => FadeTransition(
+                  opacity: a, child: ScaleTransition(scale: a, child: c)),
+              child: Padding(
+                key: ValueKey(msg),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Text(msg,
+                    style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700,
+                        color: over != null
+                            ? cs.primary
+                            : (chk != null ? cs.error : cs.onSurface))),
+              ),
             ),
             Expanded(
               child: Center(
@@ -137,7 +241,8 @@ class _GamePageState extends State<GamePage> {
                         },
                         child: CustomPaint(
                           size: Size(cons.maxWidth, cons.maxHeight),
-                          painter: BoardPainter(game, last, sr, sc, hints, flip),
+                          painter: BoardPainter(game, last, lastCap, sr, sc,
+                              hints, flip, chk, _ac, _pulse),
                         ),
                       );
                     }),
@@ -152,19 +257,24 @@ class _GamePageState extends State<GamePage> {
                 runSpacing: 8,
                 alignment: WrapAlignment.center,
                 children: [
-                  FilledButton.tonalIcon(
-                      onPressed: undo,
-                      icon: const Icon(Icons.undo),
-                      label: const Text('悔棋')),
+                  if (!online)
+                    FilledButton.tonalIcon(
+                        onPressed: game.history.isEmpty ? null : undo,
+                        icon: const Icon(Icons.undo),
+                        label: const Text('悔棋')),
                   FilledButton.tonalIcon(
                       onPressed: () => setState(() => flip = !flip),
                       icon: const Icon(Icons.flip),
                       label: const Text('翻转')),
-                  FilledButton.tonalIcon(
-                      onPressed: restart,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('重开')),
-                  if (widget.free)
+                  if (!online || m!.isHost)
+                    FilledButton.tonalIcon(
+                        onPressed: () {
+                          setState(_reset);
+                          if (online) m!.link.send({'type': 'restart'});
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重开')),
+                  if (widget.free && !online)
                     FilterChip(
                       label: const Text('规则校验'),
                       selected: strict,
@@ -183,24 +293,20 @@ class _GamePageState extends State<GamePage> {
   }
 }
 
-void _text(Canvas canvas, String s, Offset center, double size, Color color) {
-  final tp = TextPainter(
-    text: TextSpan(
-        text: s,
-        style: TextStyle(
-            fontSize: size, color: color, fontWeight: FontWeight.bold)),
-    textDirection: TextDirection.ltr,
-  )..layout();
-  tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
-}
-
 class BoardPainter extends CustomPainter {
   final Game game;
   final Move? last;
+  final bool lastCap;
   final int? sr, sc;
   final List<Move> hints;
   final bool flip;
-  BoardPainter(this.game, this.last, this.sr, this.sc, this.hints, this.flip);
+  final Side? checkSide;
+  final Animation<double> anim;
+  final Animation<double> pulse;
+
+  BoardPainter(this.game, this.last, this.lastCap, this.sr, this.sc,
+      this.hints, this.flip, this.checkSide, this.anim, this.pulse)
+      : super(repaint: Listenable.merge([anim, pulse]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -211,73 +317,63 @@ class BoardPainter extends CustomPainter {
       return Offset(cell * (cc + 0.5), cell * (rr + 0.5));
     }
 
-    const lineColor = Color(0xFF5B3A1E);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          Offset.zero & size, Radius.circular(cell * 0.3)),
-      Paint()..color = const Color(0xFFE9CB93),
-    );
-    final line = Paint()
-      ..color = lineColor
-      ..strokeWidth = 1.4
-      ..style = PaintingStyle.stroke;
+    drawBoard(canvas, cell, 0);
+    final f = anim.value;
+    final t = Curves.easeOutCubic.transform(f);
+    final lm = last;
+    final animating = lm != null && f < 1;
 
-    for (var r = 0; r < 10; r++) {
-      canvas.drawLine(pos(r, 0), pos(r, 8), line);
-    }
-    for (var c = 0; c < 9; c++) {
-      if (c == 0 || c == 8) {
-        canvas.drawLine(pos(0, c), pos(9, c), line);
-      } else {
-        canvas.drawLine(pos(0, c), pos(4, c), line);
-        canvas.drawLine(pos(5, c), pos(9, c), line);
-      }
-    }
-    canvas.drawLine(pos(0, 3), pos(2, 5), line);
-    canvas.drawLine(pos(0, 5), pos(2, 3), line);
-    canvas.drawLine(pos(7, 3), pos(9, 5), line);
-    canvas.drawLine(pos(7, 5), pos(9, 3), line);
-
-    final river = lineColor.withOpacity(0.6);
-    _text(canvas, '楚 河', Offset(cell * 2.5, cell * 5), cell * 0.5, river);
-    _text(canvas, '汉 界', Offset(cell * 6.5, cell * 5), cell * 0.5, river);
-
-    if (last != null) {
+    if (lm != null) {
       final hl = Paint()
         ..color = const Color(0xFF1E88E5)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 3;
-      canvas.drawCircle(pos(last!.fr, last!.fc), cell * 0.46, hl);
-      canvas.drawCircle(pos(last!.tr, last!.tc), cell * 0.46, hl);
+      canvas.drawCircle(pos(lm.fr, lm.fc), cell * 0.46, hl);
+      canvas.drawCircle(pos(lm.tr, lm.tc), cell * 0.46, hl);
     }
 
     for (var r = 0; r < 10; r++) {
       for (var c = 0; c < 9; c++) {
         final p = game.b[r][c];
         if (p == null) continue;
-        final ctr = pos(r, c);
-        final col = p.side == Side.red
-            ? const Color(0xFFC62828)
-            : const Color(0xFF212121);
-        final rad = cell * 0.42;
-        canvas.drawCircle(ctr + const Offset(0, 2), rad,
-            Paint()..color = Colors.black26);
-        canvas.drawCircle(ctr, rad, Paint()..color = const Color(0xFFF6E3B4));
+        if (animating && lm!.tr == r && lm.tc == c) continue;
+        drawPiece(canvas, pos(r, c), cell * 0.42, p.label,
+            p.side == Side.red ? kRedC : kBlackC);
+      }
+    }
+
+    if (animating) {
+      final p = game.b[lm!.tr][lm.tc];
+      if (p != null) {
+        final ctr = Offset.lerp(pos(lm.fr, lm.fc), pos(lm.tr, lm.tc), t)!;
+        drawPiece(canvas, ctr, cell * 0.42, p.label,
+            p.side == Side.red ? kRedC : kBlackC);
+      }
+      if (lastCap) {
         canvas.drawCircle(
-            ctr,
-            rad,
+            pos(lm.tr, lm.tc),
+            cell * (0.3 + 0.7 * f),
             Paint()
-              ..color = col
+              ..color = Colors.orangeAccent.withOpacity(1 - f)
               ..style = PaintingStyle.stroke
-              ..strokeWidth = 2);
-        canvas.drawCircle(
-            ctr,
-            rad * 0.82,
-            Paint()
-              ..color = col.withOpacity(0.5)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1);
-        _text(canvas, p.label, ctr, cell * 0.5, col);
+              ..strokeWidth = 4);
+      }
+    }
+
+    if (checkSide != null) {
+      for (var r = 0; r < 10; r++) {
+        for (var c = 0; c < 9; c++) {
+          final p = game.b[r][c];
+          if (p != null && p.type == PType.king && p.side == checkSide) {
+            canvas.drawCircle(
+                pos(r, c),
+                cell * (0.47 + 0.07 * pulse.value),
+                Paint()
+                  ..color = Colors.red.withOpacity(0.5 + 0.5 * pulse.value)
+                  ..style = PaintingStyle.stroke
+                  ..strokeWidth = 4);
+          }
+        }
       }
     }
 
