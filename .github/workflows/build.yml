@@ -1,5 +1,7 @@
 name: Build APK
 on: [workflow_dispatch, push]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
