@@ -2,19 +2,27 @@ import 'package:flutter/material.dart';
 import 'engine.dart';
 import 'board_draw.dart';
 import 'match_info.dart';
+import 'settings.dart';
 import 'ui.dart';
 
 class GamePage extends StatefulWidget {
   final bool free;
   final MatchInfo? match;
-  const GamePage({super.key, required this.free, this.match});
+  final bool mate;
+  final bool strictInit;
+  const GamePage({
+    super.key,
+    required this.free,
+    this.match,
+    this.mate = true,
+    this.strictInit = false,
+  });
 
   @override
   State<GamePage> createState() => _GamePageState();
 }
 
-class _GamePageState extends State<GamePage>
-    with SingleTickerProviderStateMixin {
+class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   final game = Game();
   int? sr, sc;
   List<Move> hints = [];
@@ -26,20 +34,21 @@ class _GamePageState extends State<GamePage>
   bool lost = false;
   String? over;
   late final AnimationController _ac;
+  late final AnimationController _pulse;
 
   MatchInfo? get m => widget.match;
   bool get online => m != null;
-  Side? get mySide =>
-      m == null ? null : (m!.first ? Side.red : Side.black);
+  Side? get mySide => m == null ? null : (m!.first ? Side.red : Side.black);
 
   @override
   void initState() {
     super.initState();
-    strict = !widget.free;
-    autoMate = m?.params['mate'] != false;
-    _ac = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 420))
+    strict = widget.free ? widget.strictInit : true;
+    autoMate = m != null ? m!.params['mate'] != false : widget.mate;
+    _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 420))
       ..value = 1;
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))
+      ..repeat(reverse: true);
     if (online) {
       flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -51,6 +60,7 @@ class _GamePageState extends State<GamePage>
   @override
   void dispose() {
     _ac.dispose();
+    _pulse.dispose();
     if (online) {
       m!.link.handler = null;
       m!.link.close();
@@ -78,8 +88,7 @@ class _GamePageState extends State<GamePage>
     final t = msg['type'];
     setState(() {
       if (t == 'move') {
-        final mv = Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int,
-            msg['tc'] as int);
+        final mv = Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int, msg['tc'] as int);
         final cap = game.b[mv.tr][mv.tc] != null;
         if (game.play(mv, strict: false)) {
           last = mv;
@@ -142,13 +151,7 @@ class _GamePageState extends State<GamePage>
       final cap = p != null;
       if (game.play(mv, strict: strict)) {
         if (online) {
-          m!.link.send({
-            'type': 'move',
-            'fr': mv.fr,
-            'fc': mv.fc,
-            'tr': mv.tr,
-            'tc': mv.tc
-          });
+          m!.link.send({'type': 'move', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
         }
         setState(() {
           last = mv;
@@ -189,115 +192,125 @@ class _GamePageState extends State<GamePage>
     } else {
       msg = '${game.turn.cn}走棋';
     }
-    final title = widget.free ? '自由模式' : '标准对局';
+    final title = widget.free ? '自由模式' : '普通对局';
 
-    return Scaffold(
-      appBar: AppBar(title: Text(online ? '$title · 联机' : title)),
-      body: SafeArea(
-        child: Column(
-          children: [
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const ImageSlot(slot: 'game'),
+        Scaffold(
+          appBar: AppBar(title: Text(online ? '$title · 联机' : title)),
+          body: SafeArea(
+            child: Column(
               children: [
-                sideTag(context, Side.black,
-                    active: over == null && game.turn == Side.black,
-                    mine: online && mySide == Side.black),
-                const SizedBox(width: 12),
-                sideTag(context, Side.red,
-                    active: over == null && game.turn == Side.red,
-                    mine: online && mySide == Side.red),
-              ],
-            ),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              transitionBuilder: (c, a) => FadeTransition(
-                  opacity: a, child: ScaleTransition(scale: a, child: c)),
-              child: Padding(
-                key: ValueKey(msg),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Text(msg,
-                    style: TextStyle(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w700,
-                        color: over != null ? cs.primary : cs.onSurface)),
-              ),
-            ),
-            Expanded(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: AspectRatio(
-                    aspectRatio: 9 / 10,
-                    child: LayoutBuilder(builder: (ctx, cons) {
-                      final cell = cons.maxWidth / 9;
-                      return GestureDetector(
-                        onTapUp: (d) {
-                          var c = (d.localPosition.dx / cell).floor();
-                          var r = (d.localPosition.dy / cell).floor();
-                          if (c < 0 || c > 8 || r < 0 || r > 9) return;
-                          if (flip) {
-                            c = 8 - c;
-                            r = 9 - r;
-                          }
-                          onTap(r, c);
-                        },
-                        child: CustomPaint(
-                          size: Size(cons.maxWidth, cons.maxHeight),
-                          painter: BoardPainter(
-                              game, last, lastCap, sr, sc, hints, flip, _ac),
-                        ),
-                      );
-                    }),
+                SizedBox(
+                  height: 44,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      sideTag(context, Side.black,
+                          active: over == null && game.turn == Side.black,
+                          mine: online && mySide == Side.black),
+                      const SizedBox(width: 12),
+                      sideTag(context, Side.red,
+                          active: over == null && game.turn == Side.red,
+                          mine: online && mySide == Side.red),
+                    ],
                   ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  if (!online)
-                    FilledButton.tonalIcon(
-                        onPressed: game.history.isEmpty ? null : undo,
-                        icon: const Icon(Icons.undo),
-                        label: const Text('悔棋')),
-                  FilledButton.tonalIcon(
-                      onPressed: () => setState(() => flip = !flip),
-                      icon: const Icon(Icons.flip),
-                      label: const Text('翻转')),
-                  if (!online || m!.isHost)
-                    FilledButton.tonalIcon(
-                        onPressed: () {
+                SizedBox(
+                  height: 40,
+                  child: Center(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      transitionBuilder: (c, a) =>
+                          FadeTransition(opacity: a, child: ScaleTransition(scale: a, child: c)),
+                      child: Text(
+                        msg,
+                        key: ValueKey(msg),
+                        style: TextStyle(
+                          fontSize: 19,
+                          fontWeight: FontWeight.w700,
+                          color: over != null ? cs.primary : cs.onSurface,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: AspectRatio(
+                        aspectRatio: 9 / 12,
+                        child: LayoutBuilder(builder: (ctx, cons) {
+                          final cell = cons.maxWidth / 9;
+                          return GestureDetector(
+                            onTapUp: (d) {
+                              var c = (d.localPosition.dx / cell).floor();
+                              var r = ((d.localPosition.dy - cell) / cell).floor();
+                              if (c < 0 || c > 8 || r < 0 || r > 9) return;
+                              if (flip) {
+                                c = 8 - c;
+                                r = 9 - r;
+                              }
+                              onTap(r, c);
+                            },
+                            child: CustomPaint(
+                              size: Size(cons.maxWidth, cons.maxHeight),
+                              painter: BoardPainter(game, last, lastCap, sr, sc, hints, flip,
+                                  _ac, _pulse),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
+                ),
+                ActionBar(
+                  children: [
+                    if (!online)
+                      LitButton(
+                          icon: Icons.undo,
+                          label: '悔棋',
+                          onTap: game.history.isEmpty ? null : undo),
+                    LitButton(
+                        icon: Icons.flip,
+                        label: '翻转',
+                        onTap: () => setState(() => flip = !flip)),
+                    if (!online || m!.isHost)
+                      LitButton(
+                        icon: Icons.refresh,
+                        label: '重开',
+                        onTap: () {
                           setState(_reset);
                           if (online) m!.link.send({'type': 'restart'});
                         },
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('重开')),
-                  if (widget.free && !online)
-                    FilterChip(
-                      label: const Text('规则校验'),
-                      selected: strict,
-                      onSelected: (v) => setState(() {
-                        strict = v;
-                        clearSel();
-                      }),
-                    ),
-                  if (!online && strict)
-                    FilterChip(
-                      label: const Text('自动判绝杀'),
-                      selected: autoMate,
-                      onSelected: (v) => setState(() => autoMate = v),
-                    ),
-                ],
-              ),
+                      ),
+                    if (widget.free && !online)
+                      LitToggle(
+                        icon: Icons.rule,
+                        label: '规则校验',
+                        value: strict,
+                        onChanged: (v) => setState(() {
+                          strict = v;
+                          clearSel();
+                        }),
+                      ),
+                    if (!online && strict)
+                      LitToggle(
+                        icon: Icons.flag,
+                        label: '自动判绝杀',
+                        value: autoMate,
+                        onChanged: (v) => setState(() => autoMate = v),
+                      ),
+                  ],
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -310,26 +323,46 @@ class BoardPainter extends CustomPainter {
   final List<Move> hints;
   final bool flip;
   final Animation<double> anim;
+  final Animation<double> pulse;
 
-  BoardPainter(this.game, this.last, this.lastCap, this.sr, this.sc,
-      this.hints, this.flip, this.anim)
-      : super(repaint: anim);
+  BoardPainter(this.game, this.last, this.lastCap, this.sr, this.sc, this.hints, this.flip,
+      this.anim, this.pulse)
+      : super(repaint: Listenable.merge([anim, pulse]));
+
+  List<Piece> _dead(Side s) => [
+        for (final h in game.history)
+          if (h.captured != null && h.captured!.side == s) h.captured!
+      ];
 
   @override
   void paint(Canvas canvas, Size size) {
     final cell = size.width / 9;
+    final top = cell;
     Offset pos(int r, int c) {
       final rr = flip ? 9 - r : r;
       final cc = flip ? 8 - c : c;
-      return Offset(cell * (cc + 0.5), cell * (rr + 0.5));
+      return Offset(cell * (cc + 0.5), top + cell * (rr + 0.5));
     }
 
-    drawBoard(canvas, cell, 0);
     final f = anim.value;
     final t = Curves.easeOutCubic.transform(f);
+    drawBoard(canvas, cell, top);
+
+    final redY = flip ? 0.0 : top + cell * 10;
+    final blackY = flip ? top + cell * 10 : 0.0;
+    for (final s in Side.values) {
+      final list = _dead(s);
+      var fresh = -1;
+      if (game.history.isNotEmpty) {
+        final cp = game.history.last.captured;
+        if (cp != null && cp.side == s) fresh = list.length - 1;
+      }
+      drawTray(canvas, cell, s == Side.red ? redY : blackY, s, list,
+          fresh: fresh, t: t, pulse: pulse.value);
+    }
+
     final lm = last;
     final animating = lm != null && f < 1;
-
     if (lm != null) {
       final hl = Paint()
         ..color = const Color(0xFF1E88E5)
@@ -343,18 +376,17 @@ class BoardPainter extends CustomPainter {
       for (var c = 0; c < 9; c++) {
         final p = game.b[r][c];
         if (p == null) continue;
-        if (animating && lm!.tr == r && lm.tc == c) continue;
+        if (animating && lm.tr == r && lm.tc == c) continue;
         drawPiece(canvas, pos(r, c), cell * 0.42, p.label,
-            p.side == Side.red ? kRedC : kBlackC);
+            p.side == Side.red ? app.red : app.black);
       }
     }
 
     if (animating) {
-      final p = game.b[lm!.tr][lm.tc];
+      final p = game.b[lm.tr][lm.tc];
       if (p != null) {
         final ctr = Offset.lerp(pos(lm.fr, lm.fc), pos(lm.tr, lm.tc), t)!;
-        drawPiece(canvas, ctr, cell * 0.42, p.label,
-            p.side == Side.red ? kRedC : kBlackC);
+        drawPiece(canvas, ctr, cell * 0.42, p.label, p.side == Side.red ? app.red : app.black);
       }
       if (lastCap) {
         canvas.drawCircle(
@@ -377,9 +409,9 @@ class BoardPainter extends CustomPainter {
             ..strokeWidth = 3.5);
     }
 
-    for (final m in hints) {
-      final ctr = pos(m.tr, m.tc);
-      if (game.b[m.tr][m.tc] != null) {
+    for (final mv in hints) {
+      final ctr = pos(mv.tr, mv.tc);
+      if (game.b[mv.tr][mv.tc] != null) {
         canvas.drawCircle(
             ctr,
             cell * 0.47,
@@ -388,8 +420,7 @@ class BoardPainter extends CustomPainter {
               ..style = PaintingStyle.stroke
               ..strokeWidth = 3);
       } else {
-        canvas.drawCircle(
-            ctr, cell * 0.12, Paint()..color = Colors.teal.withOpacity(0.8));
+        canvas.drawCircle(ctr, cell * 0.12, Paint()..color = Colors.teal.withOpacity(0.8));
       }
     }
   }
