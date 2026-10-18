@@ -6,8 +6,8 @@ import 'blind_setup.dart';
 import 'lobby.dart';
 import 'mode_setup.dart';
 import 'profile.dart';
-import 'settings.dart';
 import 'settings_page.dart';
+import 'settings.dart';
 import 'ui.dart';
 
 Future<void> main() async {
