@@ -1,11 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'engine.dart';
-import 'blind.dart';
-import 'blind_page.dart';
-import 'blind_setup.dart';
+import 'games.dart';
+import 'match_info.dart';
 import 'net.dart';
+import 'ui.dart';
 
 class LobbyPage extends StatelessWidget {
   const LobbyPage({super.key});
@@ -17,32 +17,23 @@ class LobbyPage extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Card(
-            child: ListTile(
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              leading: const Icon(Icons.add_home, size: 32),
-              title: const Text('创建房间'),
-              subtitle: const Text('当房主，选择模式和执红执黑'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const HostPage())),
-            ),
+          PressCard(
+            color: const Color(0xFF00897B),
+            icon: Icons.add_home,
+            title: '创建房间',
+            sub: '选择游戏与先后手，等待对方加入',
+            onTap: () => Navigator.push(context, fadeRoute(const HostPage())),
           ),
-          Card(
-            child: ListTile(
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              leading: const Icon(Icons.login, size: 32),
-              title: const Text('加入房间'),
-              subtitle: const Text('搜索同一WiFi下的房间，或手动输入IP'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const JoinPage())),
-            ),
+          const SizedBox(height: 14),
+          PressCard(
+            color: const Color(0xFF3949AB),
+            icon: Icons.login,
+            title: '加入房间',
+            sub: '搜索同一WiFi下的房间，或手动输入IP',
+            onTap: () => Navigator.push(context, fadeRoute(const JoinPage())),
           ),
           const Padding(
-            padding: EdgeInsets.all(12),
+            padding: EdgeInsets.all(16),
             child: Text('提示：两台手机要连同一个WiFi，或者一台开热点、另一台连上它。'),
           ),
         ],
@@ -58,9 +49,9 @@ class HostPage extends StatefulWidget {
 }
 
 class _HostPageState extends State<HostPage> {
-  int mode = 1;
-  int sideSel = 2;
-  BlindConfig cfg = BlindConfig.kingsOnly();
+  GameDef game = onlineGames.first;
+  Map<String, dynamic>? params;
+  int order = 2;
   RoomHost? host;
   List<String> ips = [];
   bool waiting = false;
@@ -93,30 +84,24 @@ class _HostPageState extends State<HostPage> {
     handed = true;
     host?.stop();
     final seed = Random().nextInt(1 << 30);
-    final hostSide = sideSel == 0
-        ? Side.red
-        : sideSel == 1
-            ? Side.black
-            : (Random().nextBool() ? Side.red : Side.black);
-    final c = mode == 0 ? BlindConfig.allUp() : cfg;
-    final title = mode == 0 ? '标准对局' : '盲棋';
+    final hostFirst =
+        order == 0 ? true : (order == 1 ? false : Random().nextBool());
+    final p = params ?? game.defaultParams();
     link.send({
       'type': 'start',
-      'cfg': c.toJson(),
+      'game': game.id,
+      'params': p,
       'seed': seed,
-      'title': title,
-      'hostSide': hostSide == Side.red ? 'red' : 'black',
+      'hostFirst': hostFirst,
     });
     Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-            builder: (_) => BlindPage(
-                cfg: c,
-                seed: seed,
-                title: title,
-                link: link,
-                mySide: hostSide,
-                isHost: true)));
+        fadeRoute(game.buildOnline(MatchInfo(
+            link: link,
+            isHost: true,
+            first: hostFirst,
+            seed: seed,
+            params: p))));
   }
 
   @override
@@ -127,6 +112,7 @@ class _HostPageState extends State<HostPage> {
 
   @override
   Widget build(BuildContext context) {
+    const head = TextStyle(fontSize: 16, fontWeight: FontWeight.w600);
     return Scaffold(
       appBar: AppBar(title: const Text('创建房间')),
       body: ListView(
@@ -136,8 +122,9 @@ class _HostPageState extends State<HostPage> {
                 const SizedBox(height: 24),
                 const Center(child: CircularProgressIndicator()),
                 const SizedBox(height: 20),
-                const Center(
-                    child: Text('等待对方加入…', style: TextStyle(fontSize: 18))),
+                Center(
+                    child: Text('等待对方加入「${game.name}」…',
+                        style: const TextStyle(fontSize: 18))),
                 const SizedBox(height: 12),
                 Center(
                     child: Text('你的IP：${ips.isEmpty ? '未知' : ips.join(' / ')}',
@@ -155,55 +142,52 @@ class _HostPageState extends State<HostPage> {
                 ),
               ]
             : [
-                const Text('模式',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const Text('选择游戏', style: head),
                 const SizedBox(height: 8),
-                SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment(value: 0, label: Text('标准')),
-                    ButtonSegment(value: 1, label: Text('盲棋')),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final g in onlineGames)
+                      ChoiceChip(
+                        avatar: Icon(g.icon, size: 18),
+                        label: Text(g.name),
+                        selected: g.id == game.id,
+                        onSelected: (_) => setState(() {
+                          game = g;
+                          params = null;
+                        }),
+                      ),
                   ],
-                  selected: {mode},
-                  onSelectionChanged: (s) => setState(() => mode = s.first),
                 ),
-                if (mode == 0)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 8),
-                    child: Text('标准联机暂无将军提示，吃掉将/帅为胜。'),
-                  ),
-                if (mode == 1)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.tune),
-                      label: const Text('设置盲棋规则'),
-                      onPressed: () async {
-                        final r = await Navigator.push<BlindConfig>(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => BlindSetupPage(
-                                    buttonText: '确定',
-                                    initial: cfg,
-                                    onConfirm: (ctx, c) =>
-                                        Navigator.pop(ctx, c))));
-                        if (r != null) setState(() => cfg = r);
-                      },
-                    ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 8),
+                  child: Text(game.desc),
+                ),
+                if (game.setup != null)
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.tune),
+                    label: Text(params == null ? '设置规则（当前默认）' : '规则已自定义，点击修改'),
+                    onPressed: () async {
+                      final r = await game.setup!(context);
+                      if (r != null && mounted) setState(() => params = r);
+                    },
                   ),
                 const SizedBox(height: 20),
-                const Text('你执',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                const Text('你的先后手', style: head),
                 const SizedBox(height: 8),
                 SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 0, label: Text('红')),
-                    ButtonSegment(value: 1, label: Text('黑')),
+                    ButtonSegment(value: 0, label: Text('先手')),
+                    ButtonSegment(value: 1, label: Text('后手')),
                     ButtonSegment(value: 2, label: Text('随机')),
                   ],
-                  selected: {sideSel},
-                  onSelectionChanged: (s) => setState(() => sideSel = s.first),
+                  selected: {order},
+                  onSelectionChanged: (s) => setState(() => order = s.first),
+                ),
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: Text('象棋类游戏中，先手执红。'),
                 ),
                 const SizedBox(height: 28),
                 FilledButton(
@@ -272,28 +256,36 @@ class _JoinPageState extends State<JoinPage> {
           timeout: const Duration(seconds: 5));
       final link = NetLink(s);
       pending = link;
-      link.handler = (m) {
-        if (m['type'] == 'start' && !handed) {
+      link.handler = (msg) {
+        if (msg['type'] == 'start' && !handed) {
+          final g = findGame((msg['game'] ?? '') as String);
+          if (g == null) {
+            link.close();
+            if (mounted) {
+              setState(() {
+                busy = false;
+                err = '找不到房主选的游戏，请两边都更新到最新版';
+              });
+            }
+            return;
+          }
           handed = true;
           link.handler = null;
           if (!mounted) {
             link.close();
             return;
           }
-          final cfg =
-              BlindConfig.fromJson(Map<String, dynamic>.from(m['cfg'] as Map));
-          final hostSide = m['hostSide'] == 'red' ? Side.red : Side.black;
+          final p = Map<String, dynamic>.from(msg['params'] as Map);
+          final hostFirst = msg['hostFirst'] as bool;
           Navigator.pushReplacement(
               context,
-              MaterialPageRoute(
-                  builder: (_) => BlindPage(
-                      cfg: cfg,
-                      seed: m['seed'] as int,
-                      title: (m['title'] ?? '盲棋') as String,
-                      link: link,
-                      mySide: hostSide.other,
-                      isHost: false)));
-        } else if (m['type'] == 'closed') {
+              fadeRoute(g.buildOnline(MatchInfo(
+                  link: link,
+                  isHost: false,
+                  first: !hostFirst,
+                  seed: msg['seed'] as int,
+                  params: p))));
+        } else if (msg['type'] == 'closed') {
           if (mounted) {
             setState(() {
               busy = false;
