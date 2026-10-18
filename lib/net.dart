@@ -41,12 +41,21 @@ class NetLink {
     }
   }
 
-  void _emit(Map<String, dynamic> m) {
-    if (m['type'] == 'hello') {
-      hello = m;
-      helloRev.value++;
-      return;
-    }
+  
+void _emit(Map<String, dynamic> m) {
+  if (m['type'] == 'hello') {
+    hello = m;
+    helloRev.value++;
+    return;
+  }
+
+  final h = _handler;
+  if (h != null) {
+    h(m);
+  } else {
+    _backlog.add(m);
+  }
+}
 
   void send(Map<String, dynamic> m) {
     if (closed) return;
