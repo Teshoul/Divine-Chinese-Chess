@@ -4,6 +4,8 @@ import 'blind_page.dart';
 import 'blind_setup.dart';
 import 'game_page.dart';
 import 'match_info.dart';
+import 'strings.dart';
+import 'ui.dart';
 
 class GameDef {
   final String id;
@@ -30,22 +32,28 @@ Future<Map<String, dynamic>?> _chessSetup(BuildContext context) {
     context: context,
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setS) => AlertDialog(
-        title: const Text('标准对局设置'),
-        content: SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('自动判绝杀'),
-          subtitle: const Text('关闭后，只有吃掉对方的将/帅才算获胜'),
-          value: mate,
-          onChanged: (v) => setS(() => mate = v),
+        title: Text(tr('标准对局设置')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            LitToggle(
+              wide: true,
+              icon: Icons.flag,
+              label: tr('自动判绝杀'),
+              value: mate,
+              onChanged: (v) => setS(() => mate = v),
+            ),
+            const SizedBox(height: 10),
+            Text(tr('关闭后，只有吃掉对方的将/帅才算获胜'), style: const TextStyle(fontSize: 13)),
+          ],
         ),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('取消'))),
           FilledButton(
-              onPressed: () =>
-                  Navigator.pop(ctx, <String, dynamic>{'mate': mate}),
-              child: const Text('确定')),
+            onPressed: () => Navigator.pop(ctx, <String, dynamic>{'mate': mate}),
+            child: Text(tr('确定')),
+          ),
         ],
       ),
     ),
@@ -54,11 +62,16 @@ Future<Map<String, dynamic>?> _chessSetup(BuildContext context) {
 
 Future<Map<String, dynamic>?> _blindSetup(BuildContext context) async {
   final cfg = await Navigator.push<BlindConfig>(
-      context,
-      MaterialPageRoute(
-          builder: (_) => BlindSetupPage(
-              buttonText: '确定',
-              onConfirm: (ctx, c) => Navigator.pop(ctx, c))));
+    context,
+    MaterialPageRoute(
+      builder: (_) => AppBackdrop(
+        child: BlindSetupPage(
+          buttonText: tr('确定'),
+          onConfirm: (ctx, c) => Navigator.pop(ctx, c),
+        ),
+      ),
+    ),
+  );
   if (cfg == null) return null;
   return <String, dynamic>{'cfg': cfg.toJson()};
 }
@@ -86,12 +99,10 @@ final List<GameDef> onlineGames = [
     name: '盲棋',
     desc: '暗子翻棋，开局明暗可自定义',
     icon: Icons.visibility_off,
-    defaultParams: () =>
-        <String, dynamic>{'cfg': BlindConfig.kingsOnly().toJson()},
+    defaultParams: () => <String, dynamic>{'cfg': BlindConfig.kingsOnly().toJson()},
     setup: _blindSetup,
     buildOnline: (m) => BlindPage(
-      cfg: BlindConfig.fromJson(
-          Map<String, dynamic>.from(m.params['cfg'] as Map)),
+      cfg: BlindConfig.fromJson(Map<String, dynamic>.from(m.params['cfg'] as Map)),
       seed: m.seed,
       match: m,
     ),
