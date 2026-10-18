@@ -29,7 +29,6 @@ jobs:
             echo "ERROR: Android Gradle file not found"
             exit 1
           fi
-
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
       - run: flutter build apk --release
