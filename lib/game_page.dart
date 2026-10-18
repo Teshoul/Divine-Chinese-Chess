@@ -13,7 +13,8 @@ class GamePage extends StatefulWidget {
   State<GamePage> createState() => _GamePageState();
 }
 
-class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
+class _GamePageState extends State<GamePage>
+    with SingleTickerProviderStateMixin {
   final game = Game();
   int? sr, sc;
   List<Move> hints = [];
@@ -21,10 +22,10 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   bool lastCap = false;
   bool flip = false;
   bool strict = true;
+  bool autoMate = true;
   bool lost = false;
   String? over;
   late final AnimationController _ac;
-  late final AnimationController _pulse;
 
   MatchInfo? get m => widget.match;
   bool get online => m != null;
@@ -35,12 +36,10 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     strict = !widget.free;
+    autoMate = m?.params['mate'] != false;
     _ac = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 420))
       ..value = 1;
-    _pulse = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 900))
-      ..repeat(reverse: true);
     if (online) {
       flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -52,7 +51,6 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _ac.dispose();
-    _pulse.dispose();
     if (online) {
       m!.link.handler = null;
       m!.link.close();
@@ -120,7 +118,12 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         return;
       }
     }
-    if (strict && !game.hasLegalMove(game.turn)) {
+    if (!strict) return;
+    if (autoMate && game.isCheckmated(game.turn)) {
+      over = '${game.turn.cn}被绝杀，${game.turn.other.cn}获胜';
+      return;
+    }
+    if (!game.hasLegalMove(game.turn)) {
       over = '${game.turn.cn}无路可走，${game.turn.other.cn}获胜';
     }
   }
@@ -139,8 +142,13 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       final cap = p != null;
       if (game.play(mv, strict: strict)) {
         if (online) {
-          m!.link.send(
-              {'type': 'move', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
+          m!.link.send({
+            'type': 'move',
+            'fr': mv.fr,
+            'fc': mv.fc,
+            'tr': mv.tr,
+            'tc': mv.tc
+          });
         }
         setState(() {
           last = mv;
@@ -171,14 +179,11 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    Side? chk;
     String msg;
     if (over != null) {
       msg = over!;
     } else if (lost) {
       msg = '对方已断开连接';
-    } else if (chk != null) {
-      msg = '${chk.cn}被将军！';
     } else if (online) {
       msg = game.turn == mySide ? '轮到你走棋' : '等待对方走棋…';
     } else {
@@ -215,9 +220,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                     style: TextStyle(
                         fontSize: 19,
                         fontWeight: FontWeight.w700,
-                        color: over != null
-                            ? cs.primary
-                            : (chk != null ? cs.error : cs.onSurface))),
+                        color: over != null ? cs.primary : cs.onSurface)),
               ),
             ),
             Expanded(
@@ -241,8 +244,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                         },
                         child: CustomPaint(
                           size: Size(cons.maxWidth, cons.maxHeight),
-                          painter: BoardPainter(game, last, lastCap, sr, sc,
-                              hints, flip, chk, _ac, _pulse),
+                          painter: BoardPainter(
+                              game, last, lastCap, sr, sc, hints, flip, _ac),
                         ),
                       );
                     }),
@@ -283,6 +286,12 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                         clearSel();
                       }),
                     ),
+                  if (!online && strict)
+                    FilterChip(
+                      label: const Text('自动判绝杀'),
+                      selected: autoMate,
+                      onSelected: (v) => setState(() => autoMate = v),
+                    ),
                 ],
               ),
             ),
@@ -300,13 +309,11 @@ class BoardPainter extends CustomPainter {
   final int? sr, sc;
   final List<Move> hints;
   final bool flip;
-  final Side? checkSide;
   final Animation<double> anim;
-  final Animation<double> pulse;
 
   BoardPainter(this.game, this.last, this.lastCap, this.sr, this.sc,
-      this.hints, this.flip, this.checkSide, this.anim, this.pulse)
-      : super(repaint: Listenable.merge([anim, pulse]));
+      this.hints, this.flip, this.anim)
+      : super(repaint: anim);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -357,23 +364,6 @@ class BoardPainter extends CustomPainter {
               ..color = Colors.orangeAccent.withOpacity(1 - f)
               ..style = PaintingStyle.stroke
               ..strokeWidth = 4);
-      }
-    }
-
-    if (checkSide != null) {
-      for (var r = 0; r < 10; r++) {
-        for (var c = 0; c < 9; c++) {
-          final p = game.b[r][c];
-          if (p != null && p.type == PType.king && p.side == checkSide) {
-            canvas.drawCircle(
-                pos(r, c),
-                cell * (0.47 + 0.07 * pulse.value),
-                Paint()
-                  ..color = Colors.red.withOpacity(0.5 + 0.5 * pulse.value)
-                  ..style = PaintingStyle.stroke
-                  ..strokeWidth = 4);
-          }
-        }
       }
     }
 
