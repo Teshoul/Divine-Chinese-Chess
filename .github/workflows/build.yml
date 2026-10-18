@@ -20,6 +20,16 @@ jobs:
           cp -r /tmp/gen/android ./android
           sed -i 's/android:label="[^"]*"/android:label="神的象棋"/' android/app/src/main/AndroidManifest.xml
           sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/><application#' android/app/src/main/AndroidManifest.xml
+          
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i -E 's/^([[:space:]]*)compileSdk[[:space:]]*=.*/\1compileSdk = 36/' android/app/build.gradle.kts
+          elif [ -f android/app/build.gradle ]; then
+            sed -i -E 's/^([[:space:]]*)compileSdkVersion[[:space:]].*/\1compileSdkVersion 36/; s/^([[:space:]]*)compileSdk[[:space:]].*/\1compileSdk 36/' android/app/build.gradle
+          else
+            echo "ERROR: Android Gradle file not found"
+            exit 1
+          fi
+
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
       - run: flutter build apk --release
