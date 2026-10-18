@@ -256,6 +256,50 @@ List<Move> legalMoves(int r, int c) {
     return false;
   }
 
+  bool kingsFacing() {
+    var r1 = -1, c1 = -1, r2 = -1, c2 = -1;
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = b[r][c];
+        if (p != null && p.type == PType.king) {
+          if (r1 < 0) {
+            r1 = r;
+            c1 = c;
+          } else {
+            r2 = r;
+            c2 = c;
+          }
+        }
+      }
+    }
+    if (r1 < 0 || r2 < 0 || c1 != c2) return false;
+    for (var r = r1 + 1; r < r2; r++) {
+      if (b[r][c1] != null) return false;
+    }
+    return true;
+  }
+
+  bool isCheckmated(Side s) {
+    if (!hasKing(s) || !inCheck(s)) return false;
+    if (kingsFacing()) return false;
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = b[r][c];
+        if (p == null || p.side != s) continue;
+        for (final m in pseudoMoves(r, c)) {
+          final cap = b[m.tr][m.tc];
+          b[m.tr][m.tc] = p;
+          b[m.fr][m.fc] = null;
+          final bad = inCheck(s);
+          b[m.fr][m.fc] = p;
+          b[m.tr][m.tc] = cap;
+          if (!bad) return false;
+        }
+      }
+    }
+    return true;
+  }
+  
   bool play(Move m, {bool strict = true}) {
     final p = b[m.fr][m.fc];
     if (p == null) return false;
