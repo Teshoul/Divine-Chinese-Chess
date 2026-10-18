@@ -5,6 +5,7 @@ import 'blind.dart';
 import 'board_draw.dart';
 import 'match_info.dart';
 import 'settings.dart';
+import 'strings.dart';
 import 'ui.dart';
 
 class BlindPage extends StatefulWidget {
@@ -40,6 +41,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   MatchInfo? get m => widget.match;
   bool get online => m != null;
   Side? get mySide => m == null ? null : (m!.first ? Side.red : Side.black);
+  String _name(Side s) => tr(s == Side.red ? '红方' : '黑方');
 
   @override
   void initState() {
@@ -48,8 +50,8 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
     game = BlindGame(cfg, widget.seed);
     _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 650))
       ..value = 1;
-    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))
-      ..repeat(reverse: true);
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
+      ..value = 1;
     if (online) {
       flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -80,6 +82,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
     lastReveal = false;
     lastDead = null;
     _ac.value = 1;
+    _pulse.value = 1;
   }
 
   bool _apply(Move mv) {
@@ -91,6 +94,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
     lastReveal = wasHidden;
     lastDead = t;
     _ac.forward(from: 0);
+    if (t != null) _pulse.forward(from: 0);
     return true;
   }
 
@@ -152,22 +156,23 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   }
 
   String get status {
-    if (game.winner != null) return '${game.winner!.cn}获胜';
-    if (lost) return '对方已断开连接';
-    if (online) return game.turn == mySide ? '轮到你走棋' : '等待对方走棋…';
-    return '${game.turn.cn}走棋';
+    if (game.winner != null) return trf('{s}获胜', {'s': _name(game.winner!)});
+    if (lost) return tr('对方已断开连接');
+    if (online) return tr(game.turn == mySide ? '轮到你走棋' : '等待对方走棋…');
+    return trf('{s}走棋', {'s': _name(game.turn)});
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final msg = status;
+    final base = tr(widget.title);
     return Stack(
       fit: StackFit.expand,
       children: [
         const ImageSlot(slot: 'game'),
         Scaffold(
-          appBar: AppBar(title: Text(online ? '${widget.title} · 联机' : widget.title)),
+          appBar: AppBar(title: Text(online ? '$base · ${tr('联机')}' : base)),
           body: SafeArea(
             child: Column(
               children: [
@@ -224,10 +229,12 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                               }
                               onTap(r, c);
                             },
-                            child: CustomPaint(
-                              size: Size(cons.maxWidth, cons.maxHeight),
-                              painter: BlindPainter(game, sr, sc, hints, flip, lastCap,
-                                  lastReveal, lastDead, _ac, _pulse),
+                            child: RepaintBoundary(
+                              child: CustomPaint(
+                                size: Size(cons.maxWidth, cons.maxHeight),
+                                painter: BlindPainter(game, sr, sc, hints, flip, lastCap,
+                                    lastReveal, lastDead, _ac, _pulse),
+                              ),
                             ),
                           );
                         }),
@@ -240,7 +247,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                     if (!online)
                       LitButton(
                         icon: Icons.undo,
-                        label: '悔棋',
+                        label: tr('悔棋'),
                         onTap: game.canUndo
                             ? () => setState(() {
                                   game.undo();
@@ -251,10 +258,10 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                       ),
                     LitButton(
                         icon: Icons.flip,
-                        label: '翻转',
+                        label: tr('翻转'),
                         onTap: () => setState(() => flip = !flip)),
                     if (!online || m!.isHost)
-                      LitButton(icon: Icons.refresh, label: '重开', onTap: restart),
+                      LitButton(icon: Icons.refresh, label: tr('重开'), onTap: restart),
                   ],
                 ),
               ],
@@ -293,6 +300,7 @@ class BlindPainter extends CustomPainter {
 
     final f = anim.value;
     final t = Curves.easeOutCubic.transform(f);
+    final pv = 0.5 + 0.5 * sin(pulse.value * pi * 6);
 
     drawBoard(canvas, cell, top);
     final redY = flip ? 0.0 : top + cell * 10;
@@ -300,9 +308,9 @@ class BlindPainter extends CustomPainter {
     final redDead = [for (final b in g.deadRed) Piece(b.type, b.side)];
     final blackDead = [for (final b in g.deadBlack) Piece(b.type, b.side)];
     drawTray(canvas, cell, redY, Side.red, redDead,
-        fresh: g.deadRed.indexWhere((x) => identical(x, lastDead)), t: t, pulse: pulse.value);
+        fresh: g.deadRed.indexWhere((x) => identical(x, lastDead)), t: t, pulse: pv);
     drawTray(canvas, cell, blackY, Side.black, blackDead,
-        fresh: g.deadBlack.indexWhere((x) => identical(x, lastDead)), t: t, pulse: pulse.value);
+        fresh: g.deadBlack.indexWhere((x) => identical(x, lastDead)), t: t, pulse: pv);
 
     final lm = g.last;
     final animating = lm != null && f < 1;
