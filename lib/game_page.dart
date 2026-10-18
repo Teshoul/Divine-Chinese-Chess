@@ -6,6 +6,7 @@ import 'match_info.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'peer.dart';
 
 class GamePage extends StatefulWidget {
   final bool free;
@@ -35,6 +36,20 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   bool autoMate = true;
   bool lost = false;
   String? over;
+  bool _recorded = false;
+
+  void _syncRecord() {
+    if (!online) return;
+    if (over == null) {
+      _recorded = false;
+    } else if (!_recorded) {
+      _recorded = true;
+      final Side w = !game.hasKing(Side.red)
+          ? Side.black
+          : (!game.hasKing(Side.black) ? Side.red : game.turn.other);
+      app.recordResult(w == mySide);
+    }
+  }
   late final AnimationController _ac;
   late final AnimationController _pulse;
 
@@ -183,11 +198,12 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    _syncRecord();
     String msg;
     if (over != null) {
       msg = over!;
     } else if (lost) {
-      msg = tr('对方已断开连接');
+      msg = tr('对方已断开连接（Ta出什么事儿了吗OwQ）');
     } else if (online) {
       msg = tr(game.turn == mySide ? '轮到你走棋' : '等待对方走棋…');
     } else {
@@ -200,6 +216,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       fit: StackFit.expand,
       children: [
         const ImageSlot(slot: 'game'),
+        if (online) ...onlineBadges(context, m!.link),
         Scaffold(
           appBar: AppBar(title: Text(title)),
           body: SafeArea(
