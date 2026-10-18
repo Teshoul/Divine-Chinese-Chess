@@ -1,13 +1,16 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'game_page.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'blind_page.dart';
 import 'blind_setup.dart';
+import 'fx.dart';
 import 'lobby.dart';
 import 'mode_setup.dart';
 import 'profile.dart';
-import 'settings_page.dart';
 import 'settings.dart';
+import 'settings_page.dart';
+import 'strings.dart';
 import 'ui.dart';
 
 void main() {
@@ -22,10 +25,7 @@ void main() {
             maxLines: 14,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              decoration: TextDecoration.none,
-            ),
+                color: Colors.white, fontSize: 13, decoration: TextDecoration.none),
           ),
         ),
       );
@@ -78,10 +78,20 @@ class ChessApp extends StatelessWidget {
         return MaterialApp(
           title: '象棋',
           debugShowCheckedModeBanner: false,
+          locale: Locale(const ['zh', 'en', 'ja', 'ru'][app.lang]),
+          supportedLocales: const [Locale('zh'), Locale('en'), Locale('ja'), Locale('ru')],
+          localizationsDelegates: GlobalMaterialLocalizations.delegates,
           themeMode: const [ThemeMode.system, ThemeMode.light, ThemeMode.dark][app.themeMode],
           theme: buildTheme(Brightness.light),
           darkTheme: buildTheme(Brightness.dark),
-          builder: (context, child) => AppBackdrop(child: child ?? const SizedBox()),
+          builder: (context, child) => Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (e) => lastTap = e.position,
+            child: RepaintBoundary(
+              key: rootKey,
+              child: AppBackdrop(child: child ?? const SizedBox()),
+            ),
+          ),
           home: const HomePage(),
         );
       },
@@ -95,37 +105,104 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  final GlobalKey _avatarKey = GlobalKey();
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  late final AnimationController _in = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 1100))
+    ..forward();
+  late final AnimationController _pc =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+  late final Ticker _tick = createTicker(_onTick);
+  final ValueNotifier<int> _frame = ValueNotifier<int>(0);
+
+  double cw = 0.5, rh = 0.5, vc = 0, vr = 0, tcw = 0.5, trh = 0.5;
+  Duration _last = Duration.zero;
   int? hover;
-  int? burst;
+  bool open = false;
+  bool _opening = false;
   int taps = 0;
   double spin = 0;
 
   static const _names = ['普通对局', '自由模式', '盲棋', '局域网对战'];
-  static const _subs = ['标准规则\n自动判胜负', '同屏轮流走\n规则随意', '暗子翻棋\n开局自定义', '同一WiFi\n联机对战'];
+  static const _subs = [
+    '标准规则\n自动判胜负',
+    '同屏轮流走\n规则随意',
+    '暗子翻棋\n开局自定义',
+    '同一WiFi\n联机对战'
+  ];
   static const _icons = [Icons.grid_on, Icons.swap_horiz, Icons.visibility_off, Icons.wifi];
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))
-      ..forward();
-  }
+  static const double _gap = 8;
 
   @override
   void dispose() {
-    _c.dispose();
+    _tick.dispose();
+    _in.dispose();
+    _pc.dispose();
+    _frame.dispose();
     super.dispose();
   }
 
-  void _open(int i) {
-    if (burst != null) return;
-    setState(() {
-      burst = i;
-      hover = null;
-    });
+  void _setTarget(int? i) {
+    if (hover == i) return;
+    hover = i;
+    tcw = i == null ? 0.5 : (i % 2 == 0 ? 0.62 : 0.38);
+    trh = i == null ? 0.5 : (i < 2 ? 0.62 : 0.38);
+    if (app.animLevel == 0) {
+      cw = tcw;
+      rh = trh;
+      vc = 0;
+      vr = 0;
+      _frame.value++;
+      return;
+    }
+    if (!_tick.isActive) {
+      _last = Duration.zero;
+      _tick.start();
+    }
+  }
+
+  void _onTick(Duration el) {
+    var dt = (el - _last).inMicroseconds / 1e6;
+    _last = el;
+    if (dt <= 0) return;
+    if (dt > 0.033) dt = 0.033;
+    final lv = app.animLevel;
+    final k = lv == 1 ? 520.0 : (lv == 2 ? 170.0 : 210.0);
+    final z = lv == 3 ? 0.4 : 1.0;
+    final c = 2 * z * sqrt(k);
+    const n = 4;
+    final h = dt / n;
+    for (var i = 0; i < n; i++) {
+      vc += (-k * (cw - tcw) - c * vc) * h;
+      cw += vc * h;
+      vr += (-k * (rh - trh) - c * vr) * h;
+      rh += vr * h;
+    }
+    _frame.value++;
+    if ((cw - tcw).abs() < 0.0004 &&
+        (rh - trh).abs() < 0.0004 &&
+        vc.abs() < 0.01 &&
+        vr.abs() < 0.01) {
+      cw = tcw;
+      rh = trh;
+      vc = 0;
+      vr = 0;
+      _tick.stop();
+      _frame.value++;
+    }
+  }
+
+  int? _hit(Offset p, double s) {
+    if (p.dx < 0 || p.dy < 0 || p.dx > s || p.dy > s) return null;
+    final w0 = (s - _gap) * cw.clamp(0.18, 0.82).toDouble();
+    final h0 = (s - _gap) * rh.clamp(0.18, 0.82).toDouble();
+    final col = p.dx <= w0 + _gap / 2 ? 0 : 1;
+    final row = p.dy <= h0 + _gap / 2 ? 0 : 1;
+    return row * 2 + col;
+  }
+
+  void _openMode(int i) {
+    if (_opening) return;
+    _opening = true;
     final Widget page;
     switch (i) {
       case 0:
@@ -136,7 +213,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         break;
       case 2:
         page = BlindSetupPage(
-          buttonText: '开始游戏',
+          buttonText: tr('开始游戏'),
           onConfirm: (ctx, cfg) {
             Navigator.pushReplacement(
                 ctx, fadeRoute(BlindPage(cfg: cfg, seed: Random().nextInt(1 << 30))));
@@ -146,45 +223,67 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       default:
         page = const LobbyPage();
     }
-    Navigator.push(context, soulRoute(page)).then((_) {
-      if (mounted) {
-        setState(() {
-          burst = null;
-          hover = null;
-        });
-      }
+    Navigator.push(context, revealRoute(page)).then((_) {
+      _opening = false;
+      if (mounted) _setTarget(null);
     });
+  }
+
+  void _toggleProfile() {
+    setState(() => open = !open);
+    if (open) {
+      _pc.forward();
+    } else {
+      _pc.reverse();
+    }
+  }
+
+  BoxDecoration _glassDeco(Color c, double r) {
+    return BoxDecoration(
+      borderRadius: BorderRadius.circular(r),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Colors.white.withOpacity(0.38), c.withOpacity(0.55), c.withOpacity(0.35)],
+        stops: const [0, 0.5, 1],
+      ),
+      border: Border.all(color: Colors.white.withOpacity(0.55), width: 1.4),
+      boxShadow: [
+        BoxShadow(color: c.withOpacity(0.35), blurRadius: 18, offset: const Offset(0, 8)),
+        BoxShadow(
+            color: Colors.white.withOpacity(0.12), blurRadius: 6, offset: const Offset(-2, -2)),
+      ],
+    );
   }
 
   Widget _tile(int i, Rect r) {
     final color = app.preset.tiles[i];
-    final active = burst == i;
-    final s = active ? 1.14 : (hover == null ? 1.0 : (hover == i ? 1.1 : 0.9));
     final ink = inkOn(color);
+    final rad = app.cardR + (app.glass ? 10 : 4);
     return Positioned.fromRect(
       rect: r,
-      child: Reveal(
-        parent: _c,
-        index: i + 1,
-        child: AnimatedScale(
-          scale: s,
-          duration: Duration(milliseconds: active ? 520 : 240),
-          curve: active ? Curves.elasticOut : Curves.easeOutCubic,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: styled(color, r: app.cardR + 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(_icons[i], size: 44, color: ink),
-                const SizedBox(height: 10),
-                Text(_names[i],
-                    style: TextStyle(color: ink, fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text(_subs[i],
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: inkSub(color), fontSize: 12)),
-              ],
+      child: DecoratedBox(
+        decoration: app.glass ? _glassDeco(color, rad) : styled(color, r: rad),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: 130,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(_icons[i], size: 44, color: ink),
+                  const SizedBox(height: 10),
+                  Text(tr(_names[i]),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: ink, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(tr(_subs[i]),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: inkSub(color), fontSize: 12)),
+                ],
+              ),
             ),
           ),
         ),
@@ -192,157 +291,130 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     );
   }
 
-  Widget _grid() {
-    return LayoutBuilder(builder: (context, cons) {
-      final s = min(min(cons.maxWidth - 40, cons.maxHeight * 0.62), 480.0);
-      const gap = 14.0;
-      final tw = (s - gap) / 2;
-      Rect rectOf(int i) =>
-          Rect.fromLTWH((i % 2) * (tw + gap), (i ~/ 2) * (tw + gap), tw, tw);
-      final front = burst ?? hover;
-      final order = <int>[];
-      for (var i = 0; i < 4; i++) {
-        if (i != front) order.add(i);
-      }
-      if (front != null) order.add(front);
-      int? hit(Offset p) {
-        if (p.dx < 0 || p.dy < 0 || p.dx > s || p.dy > s) return null;
-        return (p.dy < s / 2 ? 0 : 2) + (p.dx < s / 2 ? 0 : 1);
-      }
-
-      return SizedBox(
-        width: s,
-        height: s,
-        child: MouseRegion(
-          onExit: (_) => setState(() => hover = null),
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (e) => setState(() => hover = hit(e.localPosition)),
-            onPointerMove: (e) => setState(() => hover = hit(e.localPosition)),
-            onPointerHover: (e) => setState(() => hover = hit(e.localPosition)),
-            onPointerUp: (e) {
-              final i = hit(e.localPosition);
-              setState(() => hover = null);
-              if (i != null) _open(i);
+  Widget _grid(double s) {
+    return SizedBox(
+      width: s,
+      height: s,
+      child: MouseRegion(
+        onExit: (_) {
+          if (!_opening) _setTarget(null);
+        },
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (e) => _setTarget(_hit(e.localPosition, s)),
+          onPointerMove: (e) => _setTarget(_hit(e.localPosition, s)),
+          onPointerHover: (e) => _setTarget(_hit(e.localPosition, s)),
+          onPointerUp: (e) {
+            final i = _hit(e.localPosition, s);
+            if (i != null) {
+              _openMode(i);
+            } else {
+              _setTarget(null);
+            }
+          },
+          onPointerCancel: (_) => _setTarget(null),
+          child: ValueListenableBuilder<int>(
+            valueListenable: _frame,
+            builder: (context, _, __) {
+              final w0 = (s - _gap) * cw.clamp(0.18, 0.82).toDouble();
+              final w1 = (s - _gap) - w0;
+              final h0 = (s - _gap) * rh.clamp(0.18, 0.82).toDouble();
+              final h1 = (s - _gap) - h0;
+              final rects = [
+                Rect.fromLTWH(0, 0, w0, h0),
+                Rect.fromLTWH(w0 + _gap, 0, w1, h0),
+                Rect.fromLTWH(0, h0 + _gap, w0, h1),
+                Rect.fromLTWH(w0 + _gap, h0 + _gap, w1, h1),
+              ];
+              return Stack(
+                children: [for (var i = 0; i < 4; i++) _tile(i, rects[i])],
+              );
             },
-            onPointerCancel: (_) => setState(() => hover = null),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [for (final i in order) _tile(i, rectOf(i))],
-            ),
           ),
         ),
-      );
-    });
+      ),
+    );
   }
 
   Widget _header(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Reveal(
-      parent: _c,
-      index: 0,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GestureDetector(
-            onTap: () {
-              setState(() {
-                taps++;
-                spin += 1;
-              });
-              if (taps % 5 == 0) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('老将出马，一个顶俩！')),
-                );
-              }
-            },
-            child: AnimatedRotation(
-              turns: spin,
-              duration: const Duration(milliseconds: 800),
-              curve: Curves.elasticOut,
-              child: Container(
-                width: 56,
-                height: 56,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: app.faceRed,
-                  border: Border.all(color: app.red, width: 3),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 4)),
-                  ],
-                ),
-                child: Text('帅',
-                    style: TextStyle(
-                        color: app.red, fontSize: 28, fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('象棋', style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold)),
-              Text('单机 · 盲棋 · 局域网',
-                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _settingsBtn(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.push(context, soulRoute(const SettingsPage())),
-      child: Container(
-        width: 58,
-        height: 58,
-        decoration: styled(app.primary, r: app.uiStyle == 1 ? 8 : 29),
-        child: Icon(Icons.settings, color: inkOn(app.primary), size: 28),
+      onTap: () {
+        setState(() {
+          taps++;
+          spin += 1;
+        });
+        if (taps % 5 == 0) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(tr('老将出马，一个顶俩！'))));
+        }
+      },
+      child: AnimatedRotation(
+        turns: spin,
+        duration: const Duration(milliseconds: 800),
+        curve: Curves.elasticOut,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(tr('象棋'), style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold)),
+            Text(tr('单机 · 盲棋 · 局域网'),
+                style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+          ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final Animation<double> sec =
-        ModalRoute.of(context)?.secondaryAnimation ?? const AlwaysStoppedAnimation<double>(0.0);
-    return Scaffold(
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          const ImageSlot(slot: 'home'),
-          AnimatedBuilder(
-            animation: sec,
-            builder: (context, child) {
-              final v = Curves.easeIn.transform(sec.value);
-              return Opacity(
-                opacity: max(0.0, 1 - v * 0.92),
-                child: Transform.scale(scale: 1 + 0.4 * v, child: child),
-              );
-            },
-            child: SafeArea(
-              child: Stack(
-                children: [
-                  Align(alignment: const Alignment(0, -0.82), child: _header(context)),
-                  Center(child: _grid()),
-                  Positioned(
-                    left: 16,
-                    top: 12,
-                    child: GestureDetector(
-                      key: _avatarKey,
-                      onTap: () => openProfile(context, _avatarKey),
-                      child: const AvatarBox(size: 52),
-                    ),
+    return AnimatedBuilder(
+      animation: app,
+      builder: (context, _) {
+        return PopScope(
+          canPop: !open,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && open) _toggleProfile();
+          },
+          child: Scaffold(
+            body: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ImageSlot(slot: 'home'),
+                SafeArea(
+                  child: Stack(
+                    children: [
+                      Align(
+                        alignment: const Alignment(0, -0.78),
+                        child: Reveal(parent: _in, index: 0, child: _header(context)),
+                      ),
+                      Center(
+                        child: LayoutBuilder(builder: (context, cons) {
+                          final s = min(min(cons.maxWidth - 40, cons.maxHeight * 0.62), 480.0);
+                          return Reveal(parent: _in, index: 1, child: _grid(s));
+                        }),
+                      ),
+                      Positioned(
+                        right: 20,
+                        bottom: 20,
+                        child: PressBox(
+                          color: app.primary,
+                          r: app.uiStyle == 1 ? 8 : 29,
+                          width: 58,
+                          height: 58,
+                          onTap: () =>
+                              Navigator.push(context, revealRoute(const SettingsPage())),
+                          child: Icon(Icons.settings, color: inkOn(app.primary), size: 28),
+                        ),
+                      ),
+                    ],
                   ),
-                  Positioned(right: 20, bottom: 20, child: _settingsBtn(context)),
-                ],
-              ),
+                ),
+                ProfileLayer(anim: _pc, onToggle: _toggleProfile),
+              ],
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
