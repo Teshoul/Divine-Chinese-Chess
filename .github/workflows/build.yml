@@ -27,3 +27,12 @@ jobs:
         with:
           name: chess-apk-v2
           path: build/app/outputs/flutter-apk/app-release.apk
+      - name: Rename APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cp build/app/outputs/flutter-apk/app-release.apk Xiangqi-${{ github.ref_name }}.apk
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Xiangqi-${{ github.ref_name }}.apk
+          name: 象棋 ${{ github.ref_name }}
