@@ -24,6 +24,7 @@ jobs:
           if [ -f android/app/build.gradle.kts ]; then
             sed -i -E 's/^([[:space:]]*)compileSdk[[:space:]]*=.*/\1compileSdk = 36/' android/app/build.gradle.kts
           elif [ -f android/app/build.gradle ]; then
+          grep -n 'compileSdk' android/app/build.gradle.kts
             sed -i -E 's/^([[:space:]]*)compileSdkVersion[[:space:]].*/\1compileSdkVersion 36/; s/^([[:space:]]*)compileSdk[[:space:]].*/\1compileSdk 36/' android/app/build.gradle
           else
             echo "ERROR: Android Gradle file not found"
