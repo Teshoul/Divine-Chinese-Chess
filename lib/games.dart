@@ -24,6 +24,34 @@ class GameDef {
   });
 }
 
+Future<Map<String, dynamic>?> _chessSetup(BuildContext context) {
+  var mate = true;
+  return showDialog<Map<String, dynamic>>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setS) => AlertDialog(
+        title: const Text('标准对局设置'),
+        content: SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('自动判绝杀'),
+          subtitle: const Text('关闭后，只有吃掉对方的将/帅才算获胜'),
+          value: mate,
+          onChanged: (v) => setS(() => mate = v),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, <String, dynamic>{'mate': mate}),
+              child: const Text('确定')),
+        ],
+      ),
+    ),
+  );
+}
+
 Future<Map<String, dynamic>?> _blindSetup(BuildContext context) async {
   final cfg = await Navigator.push<BlindConfig>(
       context,
@@ -39,9 +67,10 @@ final List<GameDef> onlineGames = [
   GameDef(
     id: 'chess',
     name: '标准对局',
-    desc: '标准象棋规则，吃掉将/帅获胜',
+    desc: '标准象棋规则，可选自动判绝杀',
     icon: Icons.grid_on,
-    defaultParams: () => <String, dynamic>{},
+    defaultParams: () => <String, dynamic>{'mate': true},
+    setup: _chessSetup,
     buildOnline: (m) => GamePage(free: false, match: m),
   ),
   GameDef(
