@@ -10,10 +10,31 @@ import 'settings_page.dart';
 import 'settings.dart';
 import 'ui.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await app.load();
+  ErrorWidget.builder = (FlutterErrorDetails d) => Directionality(
+        textDirection: TextDirection.ltr,
+        child: Container(
+          color: const Color(0xFF3B0A0A),
+          padding: const EdgeInsets.all(12),
+          child: Text(
+            '出错：${d.exceptionAsString()}',
+            maxLines: 14,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ),
+      );
   runApp(const ChessApp());
+  app
+      .load()
+      .timeout(const Duration(seconds: 8))
+      .then((_) => app.change(() {}))
+      .catchError((_) {});
 }
 
 ThemeData buildTheme(Brightness b) {
