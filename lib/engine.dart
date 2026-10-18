@@ -226,19 +226,23 @@ class Game {
     return false;
   }
 
-  List<Move> legalMoves(int r, int c) {
+List<Move> legalMoves(int r, int c) {
     final p = b[r][c];
     if (p == null) return [];
-    return pseudoMoves(r, c).where((m) {
-      final cap = b[m.tr][m.tc];
-      b[m.tr][m.tc] = p;
-      b[m.fr][m.fc] = null;
-      final bad = inCheck(p.side);
-      b[m.fr][m.fc] = p;
-      b[m.tr][m.tc] = cap;
-      return !bad;
-    }).toList();
-  }
+    final res = pseudoMoves(r, c);
+    if (p.type == PType.king) {
+      final step = p.side == Side.red ? -1 : 1;
+      for (var rr = r + step; rr >= 0 && rr <= 9; rr += step) {
+        final t = b[rr][c];
+        if (t == null) continue;
+        if (t.type == PType.king && t.side != p.side) {
+          res.add(Move(r, c, rr, c));
+        }
+        break;
+      }
+    }
+    return res;
+}
 
   bool hasLegalMove(Side s) {
     for (var r = 0; r < 10; r++) {
