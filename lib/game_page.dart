@@ -1,8 +1,10 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'engine.dart';
 import 'board_draw.dart';
 import 'match_info.dart';
 import 'settings.dart';
+import 'strings.dart';
 import 'ui.dart';
 
 class GamePage extends StatefulWidget {
@@ -39,6 +41,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   MatchInfo? get m => widget.match;
   bool get online => m != null;
   Side? get mySide => m == null ? null : (m!.first ? Side.red : Side.black);
+  String _name(Side s) => tr(s == Side.red ? '红方' : '黑方');
 
   @override
   void initState() {
@@ -47,8 +50,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     autoMate = m != null ? m!.params['mate'] != false : widget.mate;
     _ac = AnimationController(vsync: this, duration: const Duration(milliseconds: 420))
       ..value = 1;
-    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))
-      ..repeat(reverse: true);
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
+      ..value = 1;
     if (online) {
       flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -74,6 +77,15 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     hints = [];
   }
 
+  void _afterMove(Move mv, bool cap) {
+    last = mv;
+    lastCap = cap;
+    clearSel();
+    checkOver();
+    _ac.forward(from: 0);
+    if (cap) _pulse.forward(from: 0);
+  }
+
   void _reset() {
     game.reset();
     last = null;
@@ -81,6 +93,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     over = null;
     clearSel();
     _ac.value = 1;
+    _pulse.value = 1;
   }
 
   void _onNet(Map<String, dynamic> msg) {
@@ -90,13 +103,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       if (t == 'move') {
         final mv = Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int, msg['tc'] as int);
         final cap = game.b[mv.tr][mv.tc] != null;
-        if (game.play(mv, strict: false)) {
-          last = mv;
-          lastCap = cap;
-          clearSel();
-          checkOver();
-          _ac.forward(from: 0);
-        }
+        if (game.play(mv, strict: false)) _afterMove(mv, cap);
       } else if (t == 'restart') {
         _reset();
       } else if (t == 'closed') {
@@ -108,9 +115,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   void select(int r, int c) {
     final p = game.b[r][c];
     setState(() {
-      if (p == null ||
-          (strict && p.side != game.turn) ||
-          (online && p.side != mySide)) {
+      if (p == null || (strict && p.side != game.turn) || (online && p.side != mySide)) {
         clearSel();
         return;
       }
@@ -123,17 +128,18 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   void checkOver() {
     for (final s in Side.values) {
       if (!game.hasKing(s)) {
-        over = '${s.other.cn}获胜';
+        over = trf('{s}获胜', {'s': _name(s.other)});
         return;
       }
     }
     if (!strict) return;
-    if (autoMate && game.isCheckmated(game.turn)) {
-      over = '${game.turn.cn}被绝杀，${game.turn.other.cn}获胜';
+    final t = game.turn;
+    if (autoMate && game.isCheckmated(t)) {
+      over = trf('{s}被绝杀，{o}获胜', {'s': _name(t), 'o': _name(t.other)});
       return;
     }
-    if (!game.hasLegalMove(game.turn)) {
-      over = '${game.turn.cn}无路可走，${game.turn.other.cn}获胜';
+    if (!game.hasLegalMove(t)) {
+      over = trf('{s}无路可走，{o}获胜', {'s': _name(t), 'o': _name(t.other)});
     }
   }
 
@@ -153,13 +159,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         if (online) {
           m!.link.send({'type': 'move', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
         }
-        setState(() {
-          last = mv;
-          lastCap = cap;
-          clearSel();
-          checkOver();
-        });
-        _ac.forward(from: 0);
+        setState(() => _afterMove(mv, cap));
       } else {
         setState(clearSel);
       }
@@ -176,6 +176,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       over = null;
       clearSel();
       _ac.value = 1;
+      _pulse.value = 1;
     });
   }
 
@@ -186,20 +187,21 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     if (over != null) {
       msg = over!;
     } else if (lost) {
-      msg = '对方已断开连接';
+      msg = tr('对方已断开连接');
     } else if (online) {
-      msg = game.turn == mySide ? '轮到你走棋' : '等待对方走棋…';
+      msg = tr(game.turn == mySide ? '轮到你走棋' : '等待对方走棋…');
     } else {
-      msg = '${game.turn.cn}走棋';
+      msg = trf('{s}走棋', {'s': _name(game.turn)});
     }
-    final title = widget.free ? '自由模式' : '普通对局';
+    final base = tr(widget.free ? '自由模式' : '普通对局');
+    final title = online ? '$base · ${tr('联机')}' : base;
 
     return Stack(
       fit: StackFit.expand,
       children: [
         const ImageSlot(slot: 'game'),
         Scaffold(
-          appBar: AppBar(title: Text(online ? '$title · 联机' : title)),
+          appBar: AppBar(title: Text(title)),
           body: SafeArea(
             child: Column(
               children: [
@@ -256,10 +258,12 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                               }
                               onTap(r, c);
                             },
-                            child: CustomPaint(
-                              size: Size(cons.maxWidth, cons.maxHeight),
-                              painter: BoardPainter(game, last, lastCap, sr, sc, hints, flip,
-                                  _ac, _pulse),
+                            child: RepaintBoundary(
+                              child: CustomPaint(
+                                size: Size(cons.maxWidth, cons.maxHeight),
+                                painter: BoardPainter(
+                                    game, last, lastCap, sr, sc, hints, flip, _ac, _pulse),
+                              ),
                             ),
                           );
                         }),
@@ -272,16 +276,16 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                     if (!online)
                       LitButton(
                           icon: Icons.undo,
-                          label: '悔棋',
+                          label: tr('悔棋'),
                           onTap: game.history.isEmpty ? null : undo),
                     LitButton(
                         icon: Icons.flip,
-                        label: '翻转',
+                        label: tr('翻转'),
                         onTap: () => setState(() => flip = !flip)),
                     if (!online || m!.isHost)
                       LitButton(
                         icon: Icons.refresh,
-                        label: '重开',
+                        label: tr('重开'),
                         onTap: () {
                           setState(_reset);
                           if (online) m!.link.send({'type': 'restart'});
@@ -290,18 +294,20 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                     if (widget.free && !online)
                       LitToggle(
                         icon: Icons.rule,
-                        label: '规则校验',
+                        label: tr('规则校验'),
                         value: strict,
                         onChanged: (v) => setState(() {
                           strict = v;
                           clearSel();
                         }),
                       ),
-                    if (!online && strict)
+                    if (!online)
                       LitToggle(
                         icon: Icons.flag,
-                        label: '自动判绝杀',
+                        label: tr('自动判绝杀'),
                         value: autoMate,
+                        enabled: strict,
+                        hint: tr('需要开启规则校验后才可开启'),
                         onChanged: (v) => setState(() => autoMate = v),
                       ),
                   ],
@@ -346,6 +352,7 @@ class BoardPainter extends CustomPainter {
 
     final f = anim.value;
     final t = Curves.easeOutCubic.transform(f);
+    final pv = 0.5 + 0.5 * sin(pulse.value * pi * 6);
     drawBoard(canvas, cell, top);
 
     final redY = flip ? 0.0 : top + cell * 10;
@@ -358,7 +365,7 @@ class BoardPainter extends CustomPainter {
         if (cp != null && cp.side == s) fresh = list.length - 1;
       }
       drawTray(canvas, cell, s == Side.red ? redY : blackY, s, list,
-          fresh: fresh, t: t, pulse: pulse.value);
+          fresh: fresh, t: t, pulse: pv);
     }
 
     final lm = last;
