@@ -6,6 +6,7 @@ import 'decor.dart';
 import 'engine.dart';
 import 'settings.dart';
 import 'strings.dart';
+import 'liquid.dart';
 
 Route<void> fadeRoute(Widget page) {
   return PageRouteBuilder<void>(
@@ -463,7 +464,7 @@ class AppBackdrop extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        DecoratedBox(
+        if(!app.divine)DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -472,7 +473,7 @@ class AppBackdrop extends StatelessWidget {
             ),
           ),
         ),
-        if (app.decor)
+        if (app.decor && !app.divine)
           RepaintBoundary(
             child: IgnorePointer(
               child: CustomPaint(
@@ -481,6 +482,7 @@ class AppBackdrop extends StatelessWidget {
               ),
             ),
           ),
+        if (app.divine) const LiquidBackdrop(),
         const ImageSlot(slot: 'global'),
         child,
       ],
