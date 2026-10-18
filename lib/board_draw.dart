@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'engine.dart';
 import 'settings.dart';
+import 'strings.dart';
 
 Color get kRedC => app.red;
 Color get kBlackC => app.black;
