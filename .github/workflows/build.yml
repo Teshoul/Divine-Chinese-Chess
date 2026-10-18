@@ -16,7 +16,7 @@ jobs:
         run: |
           flutter create --platforms=android --project-name chess_app /tmp/gen
           cp -r /tmp/gen/android ./android
-          sed -i 's/android:label="[^"]*"/android:label="Teshoul象棋"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="[^"]*"/android:label="神的象棋"/' android/app/src/main/AndroidManifest.xml
           sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/><application#' android/app/src/main/AndroidManifest.xml
       - run: flutter pub get
       - run: flutter build apk --release
