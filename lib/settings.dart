@@ -186,6 +186,12 @@ class AppSettings extends ChangeNotifier {
   int themeMode = 0; // 0 跟随系统 1 浅色 2 深色
   int uiStyle = 3; // 0 圆润 1 方正 2 简洁 3 立体
   int toggleShape = 0; // 0 圆角 1 方角
+  int lang = 0; // 0 中文 1 English 2 日本語 3 Русский
+  int fxMode = 0; // 切换动画 0 圆形扩散 1 渐变 2 无
+  int animLevel = 2; // 0 关闭 1 高效 2 舒适 3 液态Q弹
+  bool glass = false;
+  bool decor = true;
+  final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
   final Map<String, int> custom = {};
   final Map<String, ImgLayer> layers = {
     'global': ImgLayer(),
