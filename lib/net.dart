@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 const int kTcpPort = 45678;
 const int kUdpPort = 45679;
@@ -8,6 +9,8 @@ const int kUdpPort = 45679;
 class NetLink {
   final Socket socket;
   bool closed = false;
+  Map<String, dynamic>? hello;
+  final ValueNotifier<int> helloRev = ValueNotifier<int>(0);
   void Function(Map<String, dynamic>)? _handler;
   final List<Map<String, dynamic>> _backlog = [];
 
@@ -39,13 +42,11 @@ class NetLink {
   }
 
   void _emit(Map<String, dynamic> m) {
-    final h = _handler;
-    if (h != null) {
-      h(m);
-    } else {
-      _backlog.add(m);
+    if (m['type'] == 'hello') {
+      hello = m;
+      helloRev.value++;
+      return;
     }
-  }
 
   void send(Map<String, dynamic> m) {
     if (closed) return;
