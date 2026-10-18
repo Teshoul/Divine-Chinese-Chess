@@ -231,7 +231,7 @@ class _ProfileContentState extends State<ProfileContent> {
     final cs = Theme.of(context).colorScheme;
     return Expanded(
       child: GestureDetector(
-        onTap: () => _editNum(label, v, set),
+        onTap: null,
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 4),
           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -268,7 +268,7 @@ class _ProfileContentState extends State<ProfileContent> {
                     decoration: InputDecoration(labelText: tr('名字'), isDense: true),
                   ),
                   const SizedBox(height: 8),
-                  Text(tr('点击头像更换图片'),
+                  Text(tr('点击更换（来换个可爱的头像ᶻz ₍^_   ̫ _^₎喵...'),
                       style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                 ],
               ),
@@ -315,7 +315,7 @@ class _ProfileContentState extends State<ProfileContent> {
           ],
         ),
         const SizedBox(height: 20),
-        Text(tr('统计（点击数字可修改）'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        Text(tr('玩家数据统计（卸载后消失记得备份个人数据'), style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
         Row(
           children: [
