@@ -7,6 +7,7 @@ import 'match_info.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'peer.dart';
 
 class BlindPage extends StatefulWidget {
   final BlindConfig cfg;
@@ -32,6 +33,18 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   List<Move> hints = [];
   bool flip = false;
   bool lost = false;
+  bool _recorded = false;
+
+  void _syncRecord() {
+    if (!online) return;
+    final w = game.winner;
+    if (w == null) {
+      _recorded = false;
+    } else if (!_recorded) {
+      _recorded = true;
+      app.recordResult(w == mySide);
+    }
+  }
   bool lastCap = false;
   bool lastReveal = false;
   BPiece? lastDead;
@@ -165,12 +178,14 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    _syncRecord();
     final msg = status;
     final base = tr(widget.title);
     return Stack(
       fit: StackFit.expand,
       children: [
         const ImageSlot(slot: 'game'),
+        if (online) ...onlineBadges(context, m!.link),
         Scaffold(
           appBar: AppBar(title: Text(online ? '$base · ${tr('联机')}' : base)),
           body: SafeArea(
