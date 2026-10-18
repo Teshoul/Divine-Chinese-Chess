@@ -257,6 +257,11 @@ class AppSettings extends ChangeNotifier {
     themeMode = _i(j['mode'], themeMode, 2);
     uiStyle = _i(j['style'], uiStyle, 3);
     toggleShape = _i(j['shape'], toggleShape, 1);
+    lang = _i(j['lang'], lang, 3);
+    fxMode = _i(j['fx'], fxMode, 2);
+    animLevel = _i(j['anim'], animLevel, 3);
+    glass = j['glass'] == true;
+    decor = j['decor'] != false;
     custom.clear();
     final cm = j['custom'];
     if (cm is Map) {
@@ -288,6 +293,11 @@ class AppSettings extends ChangeNotifier {
         'mode': themeMode,
         'style': uiStyle,
         'shape': toggleShape,
+        'lang': lang,
+        'fx': fxMode,
+        'anim': animLevel,
+        'glass': glass,
+        'decor': decor,
         'custom': custom,
         'layers': {for (final e in layers.entries) e.key: e.value.toJson()},
         'name': name,
@@ -310,13 +320,28 @@ class AppSettings extends ChangeNotifier {
     _timer = Timer(const Duration(milliseconds: 500), _write);
   }
 
-  /// 修改后通知界面刷新并保存
+  bool _pending = false;
+
+  /// 修改后通知界面刷新并保存（同一帧内的多次修改只刷新一次）
   void change(VoidCallback f) {
     f();
-    notifyListeners();
+    if (!_pending) {
+      _pending = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _pending = false;
+        notifyListeners();
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    }
     _later();
   }
 
+  /// 只刷新头像，不重建整个界面
+  void touchAvatar(VoidCallback f) {
+    f();
+    avatarRev.value++;
+    _later();
+  }
   /// 只保存，不刷新（用于输入框）
   void quiet(VoidCallback f) {
     f();
