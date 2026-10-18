@@ -3,55 +3,72 @@ import 'package:flutter/material.dart';
 import 'engine.dart';
 import 'blind.dart';
 import 'board_draw.dart';
-import 'net.dart';
+import 'match_info.dart';
+import 'ui.dart';
+
+const Color kGold = Color(0xFFFFB300);
 
 class BlindPage extends StatefulWidget {
   final BlindConfig cfg;
   final int seed;
   final String title;
-  final NetLink? link;
-  final Side? mySide;
-  final bool isHost;
+  final MatchInfo? match;
   const BlindPage(
       {super.key,
       required this.cfg,
       required this.seed,
       this.title = '盲棋',
-      this.link,
-      this.mySide,
-      this.isHost = false});
+      this.match});
 
   @override
   State<BlindPage> createState() => _BlindPageState();
 }
 
-class _BlindPageState extends State<BlindPage> {
+class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   late BlindGame game;
   late BlindConfig cfg;
   int? sr, sc;
   List<Move> hints = [];
   bool flip = false;
   bool lost = false;
+  bool lastCap = false;
+  bool lastReveal = false;
+  BPiece? lastDead;
+  late final AnimationController _ac;
+  late final AnimationController _pulse;
 
-  bool get online => widget.link != null;
+  MatchInfo? get m => widget.match;
+  bool get online => m != null;
+  Side? get mySide =>
+      m == null ? null : (m!.first ? Side.red : Side.black);
 
   @override
   void initState() {
     super.initState();
     cfg = widget.cfg;
     game = BlindGame(cfg, widget.seed);
-    flip = online && widget.mySide == Side.black;
+    _ac = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 600))
+      ..value = 1;
+    _pulse = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1000))
+      ..repeat(reverse: true);
     if (online) {
+      flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) widget.link!.handler = _onNet;
+        if (mounted) m!.link.handler = _onNet;
       });
     }
   }
 
   @override
   void dispose() {
-    widget.link?.handler = null;
-    widget.link?.close();
+    _ac.dispose();
+    _pulse.dispose();
+    if (online) {
+      m!.link.handler = null;
+      m!.link.close();
+    }
     super.dispose();
   }
 
@@ -61,18 +78,39 @@ class _BlindPageState extends State<BlindPage> {
     hints = [];
   }
 
-  void _onNet(Map<String, dynamic> m) {
+  void _resetFlags() {
+    lastCap = false;
+    lastReveal = false;
+    lastDead = null;
+    _ac.value = 1;
+  }
+
+  bool _apply(Move mv) {
+    final p = game.b[mv.fr][mv.fc];
+    final t = game.b[mv.tr][mv.tc];
+    final wasHidden = p != null && !p.up;
+    if (!game.play(mv)) return false;
+    lastCap = t != null;
+    lastReveal = wasHidden;
+    lastDead = t;
+    _ac.forward(from: 0);
+    return true;
+  }
+
+  void _onNet(Map<String, dynamic> msg) {
     if (!mounted) return;
-    final t = m['type'];
+    final t = msg['type'];
     setState(() {
       if (t == 'move') {
-        game.play(Move(m['fr'] as int, m['fc'] as int, m['tr'] as int,
-            m['tc'] as int));
+        _apply(Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int,
+            msg['tc'] as int));
         clearSel();
       } else if (t == 'start') {
-        cfg = BlindConfig.fromJson(Map<String, dynamic>.from(m['cfg'] as Map));
-        game = BlindGame(cfg, m['seed'] as int);
+        cfg = BlindConfig.fromJson(
+            Map<String, dynamic>.from(msg['cfg'] as Map));
+        game = BlindGame(cfg, msg['seed'] as int);
         clearSel();
+        _resetFlags();
       } else if (t == 'closed') {
         lost = true;
       }
@@ -80,17 +118,26 @@ class _BlindPageState extends State<BlindPage> {
   }
 
   void onTap(int r, int c) {
-    if (game.winner != null) return;
-    if (online && (lost || game.turn != widget.mySide)) return;
+    if (game.winner != null || lost) return;
+    if (online && game.turn != mySide) return;
     final p = game.b[r][c];
     if (sr != null && hints.any((x) => x.tr == r && x.tc == c)) {
-      final m = Move(sr!, sc!, r, c);
-      if (game.play(m)) {
-        widget.link?.send(
-            {'type': 'move', 'fr': m.fr, 'fc': m.fc, 'tr': m.tr, 'tc': m.tc});
-        setState(clearSel);
-        return;
-      }
+      final mv = Move(sr!, sc!, r, c);
+      setState(() {
+        if (_apply(mv)) {
+          if (online) {
+            m!.link.send({
+              'type': 'move',
+              'fr': mv.fr,
+              'fc': mv.fc,
+              'tr': mv.tr,
+              'tc': mv.tc
+            });
+          }
+          clearSel();
+        }
+      });
+      return;
     }
     if (p != null && p.owner == game.turn) {
       setState(() {
@@ -108,35 +155,58 @@ class _BlindPageState extends State<BlindPage> {
     setState(() {
       game = BlindGame(cfg, seed);
       clearSel();
+      _resetFlags();
     });
-    widget.link?.send({'type': 'start', 'cfg': cfg.toJson(), 'seed': seed});
+    if (online) {
+      m!.link.send({'type': 'start', 'cfg': cfg.toJson(), 'seed': seed});
+    }
   }
 
   String get status {
     if (game.winner != null) return '${game.winner!.cn}获胜';
-    if (online) {
-      if (lost) return '对方已断开连接';
-      final mine = game.turn == widget.mySide;
-      return '${game.turn.cn}走棋（${mine ? '轮到你' : '等待对方…'}）';
-    }
+    if (lost) return '对方已断开连接';
+    if (online) return game.turn == mySide ? '轮到你走棋' : '等待对方走棋…';
     return '${game.turn.cn}走棋';
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final msg = status;
     return Scaffold(
       appBar: AppBar(
-          title: Text(online
-              ? '${widget.title} · 你是${widget.mySide!.cn}'
-              : widget.title)),
+          title: Text(online ? '${widget.title} · 联机' : widget.title)),
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Text(status,
-                  style: const TextStyle(
-                      fontSize: 19, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                sideTag(context, Side.black,
+                    active: game.winner == null && game.turn == Side.black,
+                    mine: online && mySide == Side.black),
+                const SizedBox(width: 12),
+                sideTag(context, Side.red,
+                    active: game.winner == null && game.turn == Side.red,
+                    mine: online && mySide == Side.red),
+              ],
+            ),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              transitionBuilder: (c, a) => FadeTransition(
+                  opacity: a, child: ScaleTransition(scale: a, child: c)),
+              child: Padding(
+                key: ValueKey(msg),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(msg,
+                    style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700,
+                        color: game.winner != null
+                            ? cs.primary
+                            : cs.onSurface)),
+              ),
             ),
             Expanded(
               child: Center(
@@ -159,7 +229,8 @@ class _BlindPageState extends State<BlindPage> {
                         },
                         child: CustomPaint(
                           size: Size(cons.maxWidth, cons.maxHeight),
-                          painter: BlindPainter(game, sr, sc, hints, flip),
+                          painter: BlindPainter(game, sr, sc, hints, flip,
+                              lastCap, lastReveal, lastDead, _ac, _pulse),
                         ),
                       );
                     }),
@@ -180,6 +251,7 @@ class _BlindPageState extends State<BlindPage> {
                             ? () => setState(() {
                                   game.undo();
                                   clearSel();
+                                  _resetFlags();
                                 })
                             : null,
                         icon: const Icon(Icons.undo),
@@ -188,7 +260,7 @@ class _BlindPageState extends State<BlindPage> {
                       onPressed: () => setState(() => flip = !flip),
                       icon: const Icon(Icons.flip),
                       label: const Text('翻转')),
-                  if (!online || widget.isHost)
+                  if (!online || m!.isHost)
                     FilledButton.tonalIcon(
                         onPressed: restart,
                         icon: const Icon(Icons.refresh),
@@ -208,10 +280,18 @@ class BlindPainter extends CustomPainter {
   final int? sr, sc;
   final List<Move> hints;
   final bool flip;
-  BlindPainter(this.g, this.sr, this.sc, this.hints, this.flip);
+  final bool lastCap;
+  final bool lastReveal;
+  final BPiece? lastDead;
+  final Animation<double> anim;
+  final Animation<double> pulse;
+
+  BlindPainter(this.g, this.sr, this.sc, this.hints, this.flip, this.lastCap,
+      this.lastReveal, this.lastDead, this.anim, this.pulse)
+      : super(repaint: Listenable.merge([anim, pulse]));
 
   void _strip(Canvas canvas, double cell, double y, Side side,
-      List<BPiece> dead) {
+      List<BPiece> dead, double t) {
     final col = side == Side.red ? kRedC : kBlackC;
     final rr = RRect.fromRectAndRadius(
         Rect.fromLTWH(0, y + cell * 0.08, cell * 9, cell * 0.84),
@@ -227,8 +307,19 @@ class BlindPainter extends CustomPainter {
         Offset(cell * 0.75, y + cell * 0.5), cell * 0.26, col.withOpacity(0.75));
     for (var i = 0; i < dead.length; i++) {
       final ctr = Offset(cell * 1.55 + i * cell * 0.46, y + cell * 0.5);
-      drawPiece(canvas, ctr, cell * 0.21, dead[i].label,
-          dead[i].side == Side.red ? kRedC : kBlackC);
+      final pc = dead[i].side == Side.red ? kRedC : kBlackC;
+      final isNew = identical(dead[i], lastDead);
+      final scale = isNew ? 1 + 0.9 * (1 - t) : 1.0;
+      drawPiece(canvas, ctr, cell * 0.21 * scale, dead[i].label, pc);
+      if (isNew) {
+        canvas.drawCircle(
+            ctr,
+            cell * (0.28 + 0.03 * pulse.value),
+            Paint()
+              ..color = kGold.withOpacity(0.55 + 0.45 * pulse.value)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2.6);
+      }
     }
   }
 
@@ -242,13 +333,18 @@ class BlindPainter extends CustomPainter {
       return Offset(cell * (cc + 0.5), top + cell * (rr + 0.5));
     }
 
+    final f = anim.value;
+    final t = Curves.easeOutCubic.transform(f);
+
     drawBoard(canvas, cell, top);
     final redY = flip ? 0.0 : top + cell * 10;
     final blackY = flip ? top + cell * 10 : 0.0;
-    _strip(canvas, cell, redY, Side.red, g.deadRed);
-    _strip(canvas, cell, blackY, Side.black, g.deadBlack);
+    _strip(canvas, cell, redY, Side.red, g.deadRed, t);
+    _strip(canvas, cell, blackY, Side.black, g.deadBlack, t);
 
     final lm = g.last;
+    final animating = lm != null && f < 1;
+
     if (lm != null) {
       final hl = Paint()
         ..color = const Color(0xFF1E88E5)
@@ -262,6 +358,7 @@ class BlindPainter extends CustomPainter {
       for (var c = 0; c < 9; c++) {
         final p = g.b[r][c];
         if (p == null) continue;
+        if (animating && lm!.tr == r && lm.tc == c) continue;
         final ctr = pos(r, c);
         final rad = cell * 0.42;
         if (p.up) {
@@ -270,6 +367,55 @@ class BlindPainter extends CustomPainter {
         } else {
           drawHidden(canvas, ctr, rad);
         }
+      }
+    }
+
+    if (animating) {
+      final p = g.b[lm!.tr][lm.tc];
+      if (p != null) {
+        final ctr = Offset.lerp(pos(lm.fr, lm.fc), pos(lm.tr, lm.tc), t)!;
+        final rad = cell * 0.42;
+        final col = p.side == Side.red ? kRedC : kBlackC;
+        if (lastReveal) {
+          final sx = max(0.05, (2 * f - 1).abs());
+          canvas.save();
+          canvas.translate(ctr.dx, ctr.dy);
+          canvas.scale(sx, 1);
+          canvas.translate(-ctr.dx, -ctr.dy);
+          if (f < 0.5) {
+            drawHidden(canvas, ctr, rad);
+          } else {
+            drawPiece(canvas, ctr, rad, p.label, col);
+          }
+          canvas.restore();
+          canvas.drawCircle(
+              ctr,
+              rad * (1.0 + 0.6 * f),
+              Paint()
+                ..color = kGold.withOpacity(1 - f)
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 3.5);
+        } else {
+          drawPiece(canvas, ctr, rad, p.label, col);
+        }
+      }
+      final dead = lastDead;
+      if (lastCap && dead != null) {
+        final dc = dead.side == Side.red ? kRedC : kBlackC;
+        canvas.drawCircle(
+            pos(lm.tr, lm.tc),
+            cell * (0.3 + 0.8 * f),
+            Paint()
+              ..color = dc.withOpacity((1 - f) * 0.9)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 4);
+        canvas.drawCircle(
+            pos(lm.tr, lm.tc),
+            cell * (0.2 + 0.6 * f),
+            Paint()
+              ..color = kGold.withOpacity((1 - f) * 0.9)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 3);
       }
     }
 
