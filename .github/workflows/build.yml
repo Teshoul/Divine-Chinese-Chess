@@ -23,6 +23,19 @@ jobs:
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
       - run: flutter build apk --release
+      - name: Sign with fixed key
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PW: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KS_B64" ] || [ -z "$KS_PW" ]; then
+            echo "no fixed key configured, keep default signature"
+            exit 0
+          fi
+          echo "$KS_B64" | base64 -d > /tmp/release.jks
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" sign --ks /tmp/release.jks --ks-key-alias xiangqi --ks-pass env:KS_PW --key-pass env:KS_PW build/app/outputs/flutter-apk/app-release.apk
+          "$BT/apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: chess-apk-v2
@@ -35,4 +48,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: Xiangqi-${{ github.ref_name }}.apk
-          name: 象棋 ${{ github.ref_name }}
+          name: 神的象棋 ${{ github.ref_name }}
