@@ -124,10 +124,41 @@ const List<Preset> kPresets = [
   ),
 ];
 
+/// 隐藏主题（输入口令解锁）
+const Preset kDivine = Preset(
+  id: 'divine',
+  name: '神',
+  hidText: '神',
+  seed: Color(0xFFD4A017),
+  boardBg: Color(0xFF4A0A0C),
+  boardLine: Color(0xFFFFD54F),
+  red: Color(0xFFFF6659),
+  black: Color(0xFFFFD54F),
+  faceRed: Color(0xFF2E0709),
+  faceBlack: Color(0xFF2E0709),
+  hid: Color(0xFF6B1214),
+  hidInk: Color(0xFFFFD54F),
+  glow: true,
+  bgL: [Color(0xFFFFF1C9), Color(0xFFFFC76B)],
+  bgD: [Color(0xFF2B0505), Color(0xFF0A0000)],
+  tiles: [Color(0xFFD32F2F), Color(0xFFFFB300), Color(0xFFB71C1C), Color(0xFFFFCA28)],
+);
+
 double _d(dynamic v, double def) => v is num ? v.toDouble() : def;
 int _i(dynamic v, int def, int hi) {
   final x = v is num ? v.toInt() : def;
   return x < 0 ? 0 : (x > hi ? hi : x);
+}
+
+/// 轻量校验码（防手滑改数据，不是真正的加密）
+String signText(String s) {
+  var h1 = 0x811C9DC5;
+  var h2 = 0x1B873593;
+  for (final u in utf8.encode('Teshoul-Divine-Chinese-Chess|$s')) {
+    h1 = ((h1 ^ u) * 0x01000193) & 0xFFFFFFFF;
+    h2 = (((h2 + u) * 0x85EBCA6B) ^ (h2 >> 13)) & 0xFFFFFFFF;
+  }
+  return h1.toRadixString(16).padLeft(8, '0') + h2.toRadixString(16).padLeft(8, '0');
 }
 
 class ImgLayer {
@@ -181,7 +212,7 @@ class ImgLayer {
       );
 }
 
-class AppSettings extends ChangeNotifier {
+class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   String presetId = 'guofeng';
   int themeMode = 0; // 0 跟随系统 1 浅色 2 深色
   int uiStyle = 3; // 0 圆润 1 方正 2 简洁 3 立体
@@ -192,6 +223,8 @@ class AppSettings extends ChangeNotifier {
   bool glass = false;
   bool decor = true;
   final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
+  final Set<String> unlocked = <String>{};
+  bool tampered = false;
   final Map<String, int> custom = {};
   final Map<String, ImgLayer> layers = {
     'global': ImgLayer(),
@@ -210,16 +243,23 @@ class AppSettings extends ChangeNotifier {
   Brightness sysB = Brightness.light;
   SharedPreferences? _sp;
   Timer? _timer;
+  bool _observing = false;
+  bool _pending = false;
+
+  List<Preset> get presets =>
+      unlocked.contains('divine') ? <Preset>[...kPresets, kDivine] : kPresets;
 
   Preset get preset {
+    if (presetId == 'divine' && unlocked.contains('divine')) return kDivine;
     for (final p in kPresets) {
       if (p.id == presetId) return p;
     }
-    return kPresets.first;
+    return kPresets[1];
   }
 
-  bool get isDark =>
-      themeMode == 2 || (themeMode == 0 && sysB == Brightness.dark);
+  bool get divine => presetId == 'divine' && unlocked.contains('divine');
+
+  bool get isDark => themeMode == 2 || (themeMode == 0 && sysB == Brightness.dark);
 
   Color ov(String k, Color d) {
     final v = custom[k];
@@ -242,6 +282,10 @@ class AppSettings extends ChangeNotifier {
 
   Future<void> load() async {
     _sp = await SharedPreferences.getInstance();
+    if (!_observing) {
+      _observing = true;
+      WidgetsBinding.instance.addObserver(this);
+    }
     final s = _sp!.getString('app_v1');
     if (s != null) {
       try {
@@ -250,6 +294,11 @@ class AppSettings extends ChangeNotifier {
     }
     launches++;
     _write();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) flush();
   }
 
   void _read(Map<String, dynamic> j) {
@@ -262,6 +311,13 @@ class AppSettings extends ChangeNotifier {
     animLevel = _i(j['anim'], animLevel, 3);
     glass = j['glass'] == true;
     decor = j['decor'] != false;
+    unlocked.clear();
+    final u = j['unlocked'];
+    if (u is List) {
+      for (final e in u) {
+        unlocked.add(e.toString());
+      }
+    }
     custom.clear();
     final cm = j['custom'];
     if (cm is Map) {
@@ -283,9 +339,20 @@ class AppSettings extends ChangeNotifier {
     birthday = (j['birthday'] ?? birthday) as String;
     avatar = j['avatar'] as String?;
     borderColor = j['border'] is num ? (j['border'] as num).toInt() : borderColor;
-    wins = _i(j['wins'], wins, 99999999);
-    losses = _i(j['losses'], losses, 99999999);
-    launches = _i(j['launches'], launches, 99999999);
+    final w = _i(j['wins'], 0, 99999999);
+    final l = _i(j['losses'], 0, 99999999);
+    final la = _i(j['launches'], 0, 99999999);
+    final sg = j['ssig'];
+    if (sg is String && sg != signText('$w|$l|$la')) {
+      tampered = true;
+      wins = 0;
+      losses = 0;
+      launches = 0;
+    } else {
+      wins = w;
+      losses = l;
+      launches = la;
+    }
   }
 
   Map<String, dynamic> _json() => {
@@ -298,6 +365,7 @@ class AppSettings extends ChangeNotifier {
         'anim': animLevel,
         'glass': glass,
         'decor': decor,
+        'unlocked': unlocked.toList(),
         'custom': custom,
         'layers': {for (final e in layers.entries) e.key: e.value.toJson()},
         'name': name,
@@ -309,6 +377,7 @@ class AppSettings extends ChangeNotifier {
         'wins': wins,
         'losses': losses,
         'launches': launches,
+        'ssig': signText('$wins|$losses|$launches'),
       };
 
   void _write() {
@@ -317,12 +386,16 @@ class AppSettings extends ChangeNotifier {
 
   void _later() {
     _timer?.cancel();
-    _timer = Timer(const Duration(milliseconds: 500), _write);
+    _timer = Timer(const Duration(milliseconds: 400), _write);
   }
 
-  bool _pending = false;
+  /// 立刻写入（切后台、记录战绩时用）
+  void flush() {
+    _timer?.cancel();
+    _write();
+  }
 
-  /// 修改后通知界面刷新并保存（同一帧内的多次修改只刷新一次）
+  /// 修改后通知界面刷新并保存（同一帧内多次修改只刷新一次）
   void change(VoidCallback f) {
     f();
     if (!_pending) {
@@ -336,16 +409,59 @@ class AppSettings extends ChangeNotifier {
     _later();
   }
 
+  /// 只保存，不刷新（用于输入框）
+  void quiet(VoidCallback f) {
+    f();
+    _later();
+  }
+
   /// 只刷新头像，不重建整个界面
   void touchAvatar(VoidCallback f) {
     f();
     avatarRev.value++;
     _later();
   }
-  /// 只保存，不刷新（用于输入框）
-  void quiet(VoidCallback f) {
-    f();
-    _later();
+
+  /// 联机对战结束后记录胜负（只能由程序调用）
+  void recordResult(bool win) {
+    if (win) {
+      wins++;
+    } else {
+      losses++;
+    }
+    flush();
+  }
+
+  String exportText() {
+    final m = _json();
+    m.remove('avatar');
+    m.remove('layers');
+    final body = base64Encode(utf8.encode(jsonEncode(m)));
+    return 'XQ1:$body.${signText(body)}';
+  }
+
+  /// 成功返回 null；'sig' 校验失败；'bad' 格式不对
+  String? importText(String raw) {
+    final t = raw.trim();
+    if (!t.startsWith('XQ1:')) return 'bad';
+    final rest = t.substring(4);
+    final dot = rest.lastIndexOf('.');
+    if (dot <= 0) return 'bad';
+    final body = rest.substring(0, dot);
+    if (signText(body) != rest.substring(dot + 1)) return 'sig';
+    try {
+      final m = jsonDecode(utf8.decode(base64Decode(body))) as Map<String, dynamic>;
+      final keepAvatar = avatar;
+      _read(m);
+      avatar = keepAvatar;
+      tampered = false;
+      avatarRev.value++;
+      notifyListeners();
+      flush();
+      return null;
+    } catch (_) {
+      return 'bad';
+    }
   }
 }
 
