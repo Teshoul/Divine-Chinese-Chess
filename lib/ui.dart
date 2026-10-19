@@ -7,6 +7,7 @@ import 'engine.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'liquid.dart';
+import 'festival.dart';
 
 Route<void> fadeRoute(Widget page) {
   return PageRouteBuilder<void>(
@@ -50,6 +51,7 @@ class Reveal extends StatelessWidget {
 
 /// 按界面风格生成的盒子样式
 BoxDecoration styled(Color color, {double? r, bool pressed = false}) {
+  if (app.divine) return divineDecoration(r ?? app.cardR, pressed);
   final radius = BorderRadius.circular(r ?? app.cardR);
   switch (app.uiStyle) {
     case 1:
@@ -104,9 +106,11 @@ BoxDecoration styled(Color color, {double? r, bool pressed = false}) {
   }
 }
 
-Color inkOn(Color c) => app.uiStyle == 2 ? c : Colors.white;
-Color inkSub(Color c) =>
-    app.uiStyle == 2 ? (app.isDark ? Colors.white70 : Colors.black54) : Colors.white70;
+Color inkOn(Color c) =>
+    app.divine ? Colors.white : (app.uiStyle == 2 ? c : Colors.white);
+Color inkSub(Color c) => app.divine
+    ? Colors.white70
+    : (app.uiStyle == 2 ? (app.isDark ? Colors.white70 : Colors.black54) : Colors.white70);
 
 /// 按下有物理下沉效果的盒子
 class PressBox extends StatefulWidget {
@@ -250,7 +254,12 @@ class LitButton extends StatelessWidget {
       r: app.btnR,
       width: 68,
       height: 56,
-      onTap: onTap,
+      onTap: onTap == null
+          ? null
+          : () {
+              if (prank.intercept(context, label)) return;
+              onTap!();
+            },
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
