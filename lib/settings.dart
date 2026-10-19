@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'festival.dart';
 
 class Preset {
   final String id, name, hidText;
@@ -225,6 +226,10 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
   final Set<String> unlocked = <String>{};
   bool tampered = false;
+  bool festOn = true;
+  String festPreview = '';
+  String prankOff = '';
+  final List<String> avatars = <String>[];
   final Map<String, int> custom = {};
   final Map<String, ImgLayer> layers = {
     'global': ImgLayer(),
