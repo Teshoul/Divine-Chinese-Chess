@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'festival.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
@@ -8,11 +9,16 @@ import 'ui.dart';
 String runCode(String raw) {
   final k = raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   if (k == 'divine chinese chess') {
-    if (app.unlocked.contains('divine')) return '该主题已解锁';
+    if (app.hasDivine) return '该主题已解锁';
     app.change(() => app.unlocked.add('divine'));
-    return '已解锁隐藏主题「神」';
+    return '已解锁隐藏主题「神」和动态头像';
   }
-  return '口令无效';
+  if (k == '投降') {
+    if (!prank.active) return '今天不是愚人节，无需投降';
+    prank.setHonest();
+    return '好啦，这回我会乖乖的啦ᯠ  _   ̫  _ ̥ ᯄ ੭';
+  }
+  return '我没写过这个，是你输错了嘛？再核对一下试试ᯠ˶｡  ̫`｡˶ᯄ੭';
 }
 
 class ExtrasSections extends StatefulWidget {
@@ -39,6 +45,14 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
     c.clear();
     FocusScope.of(context).unfocus();
     _toast(r);
+  }
+
+  void _preview(String id) {
+    app.change(() {
+      app.festPreview = id;
+      if (id == 'april') app.prankOff = '';
+    });
+    prank.reset();
   }
 
   Future<void> _export() async {
@@ -92,66 +106,112 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Column(
-      children: [
-        _card(
-          '口令',
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextField(
-                controller: c,
-                onSubmitted: (_) => _run(),
-                decoration: InputDecoration(
-                  hintText: tr('输入口令'),
-                  isDense: true,
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(onPressed: _run, child: Text(tr('执行'))),
-              ),
-            ],
-          ),
-        ),
-        _card(
-          '玩家数据',
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(tr('战绩由联机对战自动记录，不能手动修改。'),
-                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
-              Text(tr('导出内容不含头像和图片。'),
-                  style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
-              if (app.tampered)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(tr('检测到战绩数据异常，已重置。'),
-                      style: TextStyle(color: cs.error, fontSize: 13)),
-                ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
+    return AnimatedBuilder(
+      animation: app,
+      builder: (context, _) {
+        final today = detectFestival(DateTime.now());
+        return Column(
+          children: [
+            const Center(child: PrankFlagHost(at: 'settings')),
+            _card(
+              '节日彩蛋',
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  FilledButton.icon(
-                    onPressed: _export,
-                    icon: const Icon(Icons.upload),
-                    label: Text(tr('导出数据')),
+                  LitToggle(
+                    wide: true,
+                    icon: Icons.celebration,
+                    label: tr('节日彩蛋'),
+                    value: app.festOn,
+                    onChanged: (v) => app.change(() => app.festOn = v),
                   ),
-                  OutlinedButton.icon(
-                    onPressed: _import,
-                    icon: const Icon(Icons.download),
-                    label: Text(tr('导入数据')),
+                  const SizedBox(height: 10),
+                  Text(
+                    today != null
+                        ? trf('今天是{f}', {'f': tr(today.name)})
+                        : tr('今天没有节日'),
+                    style: TextStyle(color: cs.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(tr('点一下预览，再点一下取消'),
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final f in kFestivals)
+                        LitToggle(
+                          wide: true,
+                          label: tr(f.name),
+                          value: app.festPreview == f.id,
+                          onChanged: (v) => _preview(v ? f.id : ''),
+                        ),
+                    ],
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
-      ],
+            ),
+            _card(
+              '口令',
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: c,
+                    onSubmitted: (_) => _run(),
+                    decoration: InputDecoration(
+                      hintText: tr('输入口令'),
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton(onPressed: _run, child: Text(tr('执行'))),
+                  ),
+                ],
+              ),
+            ),
+            _card(
+              '玩家数据',
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tr('战绩由联机对战自动记录，不能手动修改。'),
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
+                  Text(tr('导出内容不含头像和图片。'),
+                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
+                  if (app.tampered)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(tr('检测到战绩数据异常，已重置。'),
+                          style: TextStyle(color: cs.error, fontSize: 13)),
+                    ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _export,
+                        icon: const Icon(Icons.upload),
+                        label: Text(tr('导出数据')),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _import,
+                        icon: const Icon(Icons.download),
+                        label: Text(tr('导入数据')),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
