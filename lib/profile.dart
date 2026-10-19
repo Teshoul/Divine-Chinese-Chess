@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter, lerpDouble;
 import 'package:flutter/material.dart';
+import 'glitch.dart';
+import 'liquid.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
@@ -10,7 +12,8 @@ import 'ui.dart';
 class AvatarBox extends StatelessWidget {
   final double size;
   final double x;
-  const AvatarBox({super.key, this.size = 52, this.x = 0});
+  final bool badge;
+  const AvatarBox({super.key, this.size = 52, this.x = 0, this.badge = true});
 
   @override
   Widget build(BuildContext context) {
@@ -19,13 +22,16 @@ class AvatarBox extends StatelessWidget {
       builder: (context, _, __) {
         final cs = Theme.of(context).colorScheme;
         final p = app.avatar;
-        final f = (p != null && File(p).existsSync()) ? File(p) : null;
+        final isStar = p == kStarAvatar && app.hasDivine;
+        final f = (!isStar && p != null && File(p).existsSync()) ? File(p) : null;
         final r = size * 0.2;
         final bw = max(2.0, size * 0.045);
-        final Widget img = f != null
-            ? Image.file(f, fit: BoxFit.cover, cacheWidth: 300, gaplessPlayback: true)
-            : Center(child: Icon(Icons.person, size: size * 0.6, color: cs.onSurfaceVariant));
-        return Container(
+        final Widget inner = isStar
+            ? const StarAvatarFill()
+            : (f != null
+                ? Image.file(f, fit: BoxFit.cover, cacheWidth: 300, gaplessPlayback: true)
+                : Center(child: Icon(Icons.person, size: size * 0.6, color: cs.onSurfaceVariant)));
+        final box = Container(
           width: size,
           height: size,
           decoration: BoxDecoration(
@@ -38,7 +44,7 @@ class AvatarBox extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Opacity(opacity: 1 - x, child: img),
+                Opacity(opacity: 1 - x, child: inner),
                 if (x > 0)
                   Opacity(
                     opacity: x,
@@ -50,6 +56,22 @@ class AvatarBox extends StatelessWidget {
                   ),
               ],
             ),
+          ),
+        );
+        if (!(badge && app.hasDivine && size >= 36)) return box;
+        return SizedBox(
+          width: size,
+          height: size,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(child: box),
+              Positioned(
+                right: -size * 0.14,
+                bottom: -size * 0.14,
+                child: Opacity(opacity: 1 - x, child: StarBadge(size: size * 0.42)),
+              ),
+            ],
           ),
         );
       },
@@ -71,7 +93,7 @@ class ProfileLayer extends StatelessWidget {
     final top = mq.padding.top + 12;
     final origin = Rect.fromLTWH(16, top, 52, 52);
     final ty = top + 52 + 14;
-    final th = min(size.height - ty - mq.padding.bottom - 20, 680.0);
+    final th = min(size.height - ty - mq.padding.bottom - 20, 700.0);
     final tw = size.width - 32;
     final target = Rect.fromLTWH(16, ty, tw, th);
 
@@ -85,6 +107,7 @@ class ProfileLayer extends StatelessWidget {
             final t = Curves.easeInOutCubic.transform(anim.value);
             final rect = Rect.lerp(origin, target, t)!;
             final content = max(0.0, (t - 0.5) / 0.5);
+            final radius = lerpDouble(10, app.cardR + 6, t)!;
             return Stack(
               fit: StackFit.expand,
               children: [
@@ -97,10 +120,15 @@ class ProfileLayer extends StatelessWidget {
                 ),
                 Positioned.fromRect(
                   rect: rect,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(lerpDouble(10, app.cardR + 6, t)!),
+                  child: Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: app.divine
+                        ? divineDecoration(radius, false)
+                        : BoxDecoration(
+                            color: cs.surfaceContainerHigh,
+                            borderRadius: BorderRadius.circular(radius)),
                     child: Material(
-                      color: cs.surfaceContainerHigh,
+                      type: MaterialType.transparency,
                       child: content > 0
                           ? Opacity(
                               opacity: content,
@@ -128,8 +156,8 @@ class ProfileLayer extends StatelessWidget {
             onTap: onToggle,
             child: AnimatedBuilder(
               animation: anim,
-              builder: (context, _) => AvatarBox(
-                  size: 52, x: Curves.easeInOutCubic.transform(anim.value)),
+              builder: (context, _) =>
+                  AvatarBox(size: 52, x: Curves.easeInOutCubic.transform(anim.value)),
             ),
           ),
         ),
@@ -160,6 +188,13 @@ class _ProfileContentState extends State<ProfileContent> {
   late final TextEditingController bioC = TextEditingController(text: app.bio);
 
   @override
+  void initState() {
+    super.initState();
+    final a = app.avatar;
+    if (a != null && a != kStarAvatar && !app.avatars.contains(a)) app.avatars.add(a);
+  }
+
+  @override
   void dispose() {
     nameC.dispose();
     uidC.dispose();
@@ -167,9 +202,41 @@ class _ProfileContentState extends State<ProfileContent> {
     super.dispose();
   }
 
-  Future<void> _pickAvatar() async {
+  Future<void> _addAvatar() async {
     final p = await pickImage();
-    if (p != null) app.touchAvatar(() => app.avatar = p);
+    if (p == null) return;
+    app.touchAvatar(() {
+      if (!app.avatars.contains(p)) app.avatars.add(p);
+      app.avatar = p;
+    });
+    if (mounted) setState(() {});
+  }
+
+  void _select(String p) {
+    app.touchAvatar(() => app.avatar = p);
+    setState(() {});
+  }
+
+  Future<void> _delete(String p) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: Text(tr('删除这张头像？')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('取消'))),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('确定'))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    app.touchAvatar(() {
+      app.avatars.remove(p);
+      if (app.avatar == p) app.avatar = null;
+    });
+    try {
+      File(p).deleteSync();
+    } catch (_) {}
+    if (mounted) setState(() {});
   }
 
   Future<void> _pickBirthday() async {
@@ -207,42 +274,80 @@ class _ProfileContentState extends State<ProfileContent> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _editNum(String title, int cur, void Function(int) set) async {
-    final c = TextEditingController(text: '$cur');
-    final v = await showDialog<int>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(trf('修改{x}', {'x': title})),
-        content: TextField(
-            controller: c, keyboardType: TextInputType.number, autofocus: true),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('取消'))),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, int.tryParse(c.text) ?? cur),
-            child: Text(tr('确定')),
-          ),
-        ],
+  Widget _thumb(String p) {
+    final cs = Theme.of(context).colorScheme;
+    final sel = app.avatar == p;
+    final Widget img = p == kStarAvatar
+        ? const StarAvatarFill()
+        : Image.file(File(p),
+            fit: BoxFit.cover,
+            cacheWidth: 160,
+            errorBuilder: (c, e, s) => const Icon(Icons.broken_image));
+    return GestureDetector(
+      onTap: () => _select(p),
+      onLongPress: p == kStarAvatar ? null : () => _delete(p),
+      child: Container(
+        width: 56,
+        height: 56,
+        margin: const EdgeInsets.only(right: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: sel ? app.primary : cs.outline.withOpacity(0.4), width: sel ? 3 : 1),
+        ),
+        child: ClipRRect(borderRadius: BorderRadius.circular(8), child: img),
       ),
     );
-    if (v != null) setState(() => app.quiet(() => set(v < 0 ? 0 : v)));
   }
 
-  Widget _stat(String label, int v, void Function(int) set) {
+  Widget _gallery() {
     final cs = Theme.of(context).colorScheme;
-    return Expanded(
-      child: GestureDetector(
-        onTap: null,
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: styled(cs.surfaceContainerHighest, r: app.cardR),
-          child: Column(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr('头像库'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 58,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
             children: [
-              Text('$v', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 2),
-              Text(label, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+              if (app.hasDivine) _thumb(kStarAvatar),
+              for (final p in app.avatars) _thumb(p),
+              GestureDetector(
+                onTap: _addAvatar,
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: cs.outline.withOpacity(0.6)),
+                  ),
+                  child: Icon(Icons.add, color: cs.onSurfaceVariant),
+                ),
+              ),
             ],
           ),
+        ),
+        const SizedBox(height: 4),
+        Text(tr('长按头像可删除'), style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+      ],
+    );
+  }
+
+  Widget _stat(String label, int v) {
+    final cs = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: styled(cs.surfaceContainerHighest, r: app.cardR),
+        child: Column(
+          children: [
+            Text('$v', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+          ],
         ),
       ),
     );
@@ -256,25 +361,37 @@ class _ProfileContentState extends State<ProfileContent> {
       children: [
         Row(
           children: [
-            GestureDetector(onTap: _pickAvatar, child: const AvatarBox(size: 92)),
+            GestureDetector(onTap: _addAvatar, child: const AvatarBox(size: 92)),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextField(
-                    controller: nameC,
-                    onChanged: (v) => app.quiet(() => app.name = v),
-                    decoration: InputDecoration(labelText: tr('名字'), isDense: true),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: nameC,
+                          onChanged: (v) => app.quiet(() => app.name = v),
+                          decoration: InputDecoration(labelText: tr('名字'), isDense: true),
+                        ),
+                      ),
+                      if (app.hasDivine) ...[
+                        const SizedBox(width: 8),
+                        const DivineMark(size: 26),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 8),
-                  Text(tr('点击更换（来换个可爱的头像ᶻz ₍^_   ̫ _^₎喵...'),
+                  Text(tr('点击更换（来换一个可爱点的头像ᶻz ₍^_   ̫ _^₎喵...）'),
                       style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                 ],
               ),
             ),
           ],
         ),
+        const SizedBox(height: 16),
+        _gallery(),
         const SizedBox(height: 16),
         TextField(
           controller: uidC,
@@ -315,13 +432,13 @@ class _ProfileContentState extends State<ProfileContent> {
           ],
         ),
         const SizedBox(height: 20),
-        Text(tr('玩家数据统计（卸载后消失记得备份个人数据'), style: const TextStyle(fontWeight: FontWeight.w700)),
+        Text(tr('玩家数据记录（卸载后会清空，请注意导出数据备份）'), style: const TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 10),
         Row(
           children: [
-            _stat(tr('胜'), app.wins, (v) => app.wins = v),
-            _stat(tr('负'), app.losses, (v) => app.losses = v),
-            _stat(tr('启动次数'), app.launches, (v) => app.launches = v),
+            _stat(tr('胜'), app.wins),
+            _stat(tr('负'), app.losses),
+            _stat(tr('启动次数'), app.launches),
           ],
         ),
       ],
