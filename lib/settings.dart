@@ -389,6 +389,9 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'anim': animLevel,
         'glass': glass,
         'decor': decor,
+        'fest': festOn,
+        'prankOff': prankOff,
+        'avatars': avatars,
         'unlocked': unlocked.toList(),
         'custom': custom,
         'layers': {for (final e in layers.entries) e.key: e.value.toJson()},
@@ -460,6 +463,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     final m = _json();
     m.remove('avatar');
     m.remove('layers');
+    m.remove('avatars');
     final body = base64Encode(utf8.encode(jsonEncode(m)));
     return 'XQ1:$body.${signText(body)}';
   }
