@@ -176,21 +176,21 @@ class PrankState extends ChangeNotifier {
   void tapFlag(BuildContext c) {
     if (honest) {
       app.change(() => app.prankOff = todayKey());
-      say(c, tr('白旗收到！愚人节恶作剧到此为止'));
+      say(c, tr('哈哈，今天就不搞你这个杂鱼了ᯠ˶｡  ̫`｡˶ᯄ੭'));
       reset();
       return;
     }
     const lines = [
-      '想投降？先到右上角去找我',
-      '这次从右下角出来，抓得住吗',
-      '我跑到主菜单页面去了',
-      '我躲进设置页了，对上口令才肯老实',
+      '你好OvO',
+      '想投降先追上我OwO',
+      '拜拜～跑路了❍⩊❍',
+      '要不去口令区说点什么？',
     ];
     if (stage < 4) {
       say(c, tr(lines[stage]));
       stage++;
     } else {
-      say(c, tr('在口令区输入“投降”，我就老实了'));
+      say(c, tr('说“投降”啊，杂鱼ᯠ  _   ̫  _ ̥ ᯄ ੭'));
     }
     notifyListeners();
   }
