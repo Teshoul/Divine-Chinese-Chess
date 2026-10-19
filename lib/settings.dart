@@ -264,7 +264,9 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
 
   bool get divine => presetId == 'divine' && unlocked.contains('divine');
 
-  bool get isDark => themeMode == 2 || (themeMode == 0 && sysB == Brightness.dark);
+  bool get hasDivine => unlocked.contains('divine');
+  bool get isDark =>
+      divine || themeMode == 2 || (themeMode == 0 && sysB == Brightness.dark);
 
   Color ov(String k, Color d) {
     final v = custom[k];
@@ -279,11 +281,19 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   Color get faceRed => preset.faceRed;
   Color get faceBlack => preset.faceBlack;
   bool get glow => preset.glow;
-  Color get bgTop => ov('bgTop', isDark ? preset.bgD[0] : preset.bgL[0]);
-  Color get bgBottom => ov('bgBottom', isDark ? preset.bgD[1] : preset.bgL[1]);
+  Color get bgTop => ov('bgTop', festBg(true) ?? (isDark ? preset.bgD[0] : preset.bgL[0]));
+  Color get bgBottom =>
+      ov('bgBottom', festBg(false) ?? (isDark ? preset.bgD[1] : preset.bgL[1]));
 
   double get cardR => const [26.0, 6.0, 14.0, 12.0][uiStyle];
   double get btnR => const [30.0, 6.0, 12.0, 12.0][uiStyle];
+  Color? festBg(bool top) {
+    if (divine) return null;
+    final f = activeFestival();
+    if (f == null) return null;
+    final c = top ? f.top : f.bottom;
+    return isDark ? Color.lerp(c, Colors.black, 0.6) : c;
+  }
 
   Future<void> load() async {
     _sp = await SharedPreferences.getInstance();
@@ -316,6 +326,15 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     animLevel = _i(j['anim'], animLevel, 3);
     glass = j['glass'] == true;
     decor = j['decor'] != false;
+    festOn = j['fest'] != false;
+    prankOff = (j['prankOff'] ?? '') as String;
+    final av = j['avatars'];
+    if (av is List) {
+      avatars.clear();
+      for (final e in av) {
+        if (e is String) avatars.add(e);
+      }
+    }
     unlocked.clear();
     final u = j['unlocked'];
     if (u is List) {
