@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'glitch.dart';
 import 'net.dart';
 import 'settings.dart';
 import 'strings.dart';
@@ -12,13 +13,23 @@ class PeerInfo {
   final String uid;
   final Uint8List? avatar;
   final int border;
-  const PeerInfo({this.name = '', this.uid = '', this.avatar, this.border = 0xFF26A69A});
+  final bool divine;
+  final bool dyn;
+  const PeerInfo({
+    this.name = '',
+    this.uid = '',
+    this.avatar,
+    this.border = 0xFF26A69A,
+    this.divine = false,
+    this.dyn = false,
+  });
 }
 
 Future<Map<String, dynamic>> buildHello() async {
   String? b64;
   final p = app.avatar;
-  if (p != null) {
+  final star = app.hasDivine && p == kStarAvatar;
+  if (p != null && p != kStarAvatar) {
     try {
       final f = File(p);
       if (f.existsSync()) {
@@ -40,6 +51,8 @@ Future<Map<String, dynamic>> buildHello() async {
     'uid': app.uid,
     'avatar': b64,
     'border': app.borderColor,
+    'divine': app.hasDivine,
+    'dyn': star,
   };
 }
 
@@ -53,6 +66,8 @@ PeerInfo? peerFromHello(Map<String, dynamic> m) {
       uid: '${m['uid'] ?? ''}',
       avatar: av,
       border: m['border'] is num ? (m['border'] as num).toInt() : 0xFF26A69A,
+      divine: m['divine'] == true,
+      dyn: m['dyn'] == true,
     );
   } catch (_) {
     return null;
@@ -64,48 +79,79 @@ class PlayerBadge extends StatelessWidget {
   final String? file;
   final Uint8List? bytes;
   final int border;
-  const PlayerBadge(
-      {super.key, required this.name, this.file, this.bytes, required this.border});
+  final bool divine;
+  final bool dyn;
+  const PlayerBadge({
+    super.key,
+    required this.name,
+    this.file,
+    this.bytes,
+    required this.border,
+    this.divine = false,
+    this.dyn = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    ImageProvider? img;
-    if (bytes != null) {
-      img = MemoryImage(bytes!);
-    } else if (file != null && File(file!).existsSync()) {
-      img = ResizeImage(FileImage(File(file!)), width: 160);
+    Widget inner;
+    if (dyn) {
+      inner = const StarAvatarFill();
+    } else {
+      ImageProvider? img;
+      if (bytes != null) {
+        img = MemoryImage(bytes!);
+      } else if (file != null && File(file!).existsSync()) {
+        img = ResizeImage(FileImage(File(file!)), width: 160);
+      }
+      inner = img != null
+          ? Image(image: img, fit: BoxFit.cover, gaplessPlayback: true)
+          : Icon(Icons.person, color: cs.onSurfaceVariant);
     }
+    final box = Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Color(border), width: 2.4),
+        color: cs.surfaceContainerHighest,
+      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(7.5), child: inner),
+    );
     return Material(
       type: MaterialType.transparency,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
+          SizedBox(
             width: 46,
             height: 46,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Color(border), width: 2.4),
-              color: cs.surfaceContainerHighest,
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(7.5),
-              child: img != null
-                  ? Image(image: img, fit: BoxFit.cover, gaplessPlayback: true)
-                  : Icon(Icons.person, color: cs.onSurfaceVariant),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned.fill(child: box),
+                if (divine) const Positioned(right: -6, bottom: -6, child: StarBadge(size: 20)),
+              ],
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
           SizedBox(
-            width: 72,
-            child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontSize: 11, fontWeight: FontWeight.w700, color: cs.onSurface),
+            width: 96,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Flexible(
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w700, color: cs.onSurface),
+                  ),
+                ),
+                if (divine) ...[
+                  const SizedBox(width: 3),
+                  const DivineMark(size: 13),
+                ],
+              ],
             ),
           ),
         ],
@@ -151,6 +197,8 @@ class _OpponentBadgeState extends State<OpponentBadge> {
       name: (v == null || v.name.isEmpty) ? tr('对手') : v.name,
       bytes: v?.avatar,
       border: v?.border ?? 0xFF26A69A,
+      divine: v?.divine ?? false,
+      dyn: v?.dyn ?? false,
     );
   }
 }
@@ -158,6 +206,7 @@ class _OpponentBadgeState extends State<OpponentBadge> {
 /// 左下角是自己，右上角是对手
 List<Widget> onlineBadges(BuildContext context, NetLink link) {
   final pad = MediaQuery.paddingOf(context);
+  final star = app.hasDivine && app.avatar == kStarAvatar;
   return [
     Positioned(
       top: pad.top + kToolbarHeight + 2,
@@ -167,7 +216,13 @@ List<Widget> onlineBadges(BuildContext context, NetLink link) {
     Positioned(
       bottom: pad.bottom + 8,
       left: 8,
-      child: PlayerBadge(name: app.name, file: app.avatar, border: app.borderColor),
+      child: PlayerBadge(
+        name: app.name,
+        file: star ? null : app.avatar,
+        border: app.borderColor,
+        divine: app.hasDivine,
+        dyn: star,
+      ),
     ),
   ];
 }
