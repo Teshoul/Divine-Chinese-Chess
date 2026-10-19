@@ -4,6 +4,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'blind_page.dart';
 import 'blind_setup.dart';
+import 'festival.dart';
 import 'fx.dart';
 import 'liquid.dart';
 import 'lobby.dart';
@@ -83,16 +84,28 @@ class ChessApp extends StatelessWidget {
           locale: Locale(const ['zh', 'en', 'ja', 'ru'][app.lang]),
           supportedLocales: const [Locale('zh'), Locale('en'), Locale('ja'), Locale('ru')],
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
-          themeMode: const [ThemeMode.system, ThemeMode.light, ThemeMode.dark][app.themeMode],
+          themeMode: app.divine
+              ? ThemeMode.dark
+              : const [ThemeMode.system, ThemeMode.light, ThemeMode.dark][app.themeMode],
           theme: buildTheme(Brightness.light),
           darkTheme: buildTheme(Brightness.dark),
-          builder: (context, child) => Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: (e) => lastTap = e.position,
-            child: RepaintBoundary(
-              key: rootKey,
-              child: AppBackdrop(child: child ?? const SizedBox()),
-            ),
+          builder: (context, child) => Stack(
+            fit: StackFit.expand,
+            children: [
+              Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (e) {
+                  lastTap = e.position;
+                  festKey.currentState?.tap(e.position);
+                },
+                child: RepaintBoundary(
+                  key: rootKey,
+                  child: AppBackdrop(child: child ?? const SizedBox()),
+                ),
+              ),
+              Positioned.fill(child: IgnorePointer(child: FestivalLayer(key: festKey))),
+              const PrankFlagOverlay(),
+            ],
           ),
           home: const HomePage(),
         );
@@ -265,6 +278,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final sub = divine ? Colors.white70 : inkSub(color);
     final rad = app.cardR + (app.glass ? 10 : 4);
     final shadows = divine ? const [Shadow(color: Color(0xAA000000), blurRadius: 6)] : null;
+    // 愚人节：名字错位，点哪块还是进哪块
+    final li = prank.active ? (i + 1) % 4 : i;
     final content = Padding(
       padding: const EdgeInsets.all(12),
       child: FittedBox(
@@ -276,12 +291,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             children: [
               Icon(_icons[i], size: 44, color: ink),
               const SizedBox(height: 10),
-              Text(tr(_names[i]),
+              Text(tr(_names[li]),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                       color: ink, fontSize: 18, fontWeight: FontWeight.bold, shadows: shadows)),
               const SizedBox(height: 4),
-              Text(tr(_subs[i]),
+              Text(tr(_subs[li]),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: sub, fontSize: 12, shadows: shadows)),
             ],
@@ -363,7 +378,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(tr('象棋'), style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold)),
+            Text(prank.active ? '棋象' : tr('象棋'),
+                style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold)),
             Text(tr('单机 · 盲棋 · 局域网'),
                 style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
           ],
@@ -400,7 +416,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: app,
+      animation: Listenable.merge(<Listenable>[app, prank]),
       builder: (context, _) {
         return PopScope(
           canPop: !open,
@@ -425,6 +441,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           return Reveal(parent: _in, index: 1, child: _grid(s));
                         }),
                       ),
+                      const Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 100,
+                        child: Center(child: PrankFlagHost(at: 'home')),
+                      ),
                       Positioned(
                         left: 20,
                         bottom: 20,
@@ -442,7 +464,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         bottom: 20,
                         child: _roundBtn(
                           Icons.settings,
-                          () => Navigator.push(context, revealRoute(const SettingsPage())),
+                          () {
+                            if (prank.gate(context, 'settings', '设置坏了，再点一次试试')) return;
+                            Navigator.push(context, revealRoute(const SettingsPage()));
+                          },
                           0.0,
                         ),
                       ),
