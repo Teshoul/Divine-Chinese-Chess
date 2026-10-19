@@ -37,6 +37,18 @@ jobs:
           fi
       - run: flutter pub get
       - run: dart run flutter_launcher_icons
+      - name: Force compileSdk 36 for plugins
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/force-sdk.gradle <<'EOF'
+          allprojects {
+              afterEvaluate { p ->
+                  if (p.plugins.hasPlugin('com.android.library')) {
+                      p.android.compileSdk = 36
+                  }
+              }
+          }
+          EOF
       - run: flutter build apk --release
       - name: Sign with fixed key
         env:
