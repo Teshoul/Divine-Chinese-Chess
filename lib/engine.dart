@@ -36,7 +36,8 @@ class MoveRecord {
   final Move move;
   final Piece? captured;
   final Side prevTurn;
-  MoveRecord(this.move, this.captured, this.prevTurn);
+  final bool swap;
+  MoveRecord(this.move, this.captured, this.prevTurn, {this.swap = false});
 }
 
 class Game {
@@ -324,8 +325,13 @@ List<Move> legalMoves(int r, int c) {
   void undo() {
     if (history.isEmpty) return;
     final h = history.removeLast();
-    b[h.move.fr][h.move.fc] = b[h.move.tr][h.move.tc];
-    b[h.move.tr][h.move.tc] = h.captured;
+    if (h.swap) {
+      final a = b[h.move.fr][h.move.fc];
+      b[h.move.fr][h.move.fc] = b[h.move.tr][h.move.tc];
+      b[h.move.tr][h.move.tc] = a;
+    } else {
+      b[h.move.fr][h.move.fc] = b[h.move.tr][h.move.tc];
+      b[h.move.tr][h.move.tc] = h.captured;
+    }
     turn = h.prevTurn;
   }
-}
