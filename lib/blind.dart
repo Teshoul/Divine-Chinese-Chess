@@ -69,7 +69,8 @@ class _Rec {
   final bool capWasUp;
   final bool wasUp;
   final Side prevTurn;
-  _Rec(this.m, this.cap, this.capWasUp, this.wasUp, this.prevTurn);
+  final bool swap;
+  _Rec(this.m, this.cap, this.capWasUp, this.wasUp, this.prevTurn, {this.swap = false});
 }
 
 class BlindGame {
@@ -247,6 +248,34 @@ class BlindGame {
     return false;
   }
 
+  /// 开发者：无视规则移动 / 吃子 / 调换
+  bool devApply(Move m) {
+    if (m.fr == m.tr && m.fc == m.tc) return false;
+    final p = b[m.fr][m.fc];
+    if (p == null) return false;
+    final t = b[m.tr][m.tc];
+    if (t != null && t.owner == p.owner) {
+      _hist.add(_Rec(m, null, false, p.up, turn, swap: true));
+      b[m.fr][m.fc] = t;
+      b[m.tr][m.tc] = p;
+      last = m;
+      return true;
+    }
+    _hist.add(_Rec(m, t, t?.up ?? false, p.up, turn));
+    if (t != null) {
+      t.up = true;
+      (t.side == Side.red ? deadRed : deadBlack).add(t);
+    }
+    b[m.tr][m.tc] = p;
+    b[m.fr][m.fc] = null;
+    last = m;
+    if (p.owner == turn) {
+      p.up = true;
+      turn = turn.other;
+    }
+    if (t != null && t.type == PType.king) winner = t.side.other;
+    return true;
+  }
   bool play(Move m) {
     if (winner != null) return false;
     final p = b[m.fr][m.fc];
@@ -276,16 +305,21 @@ class BlindGame {
     if (_hist.isEmpty) return;
     final h = _hist.removeLast();
     final p = b[h.m.tr][h.m.tc]!;
-    p.up = h.wasUp;
-    b[h.m.fr][h.m.fc] = p;
-    b[h.m.tr][h.m.tc] = h.cap;
-    final c = h.cap;
-    if (c != null) {
-      c.up = h.capWasUp;
-      (c.side == Side.red ? deadRed : deadBlack).remove(c);
+    if (h.swap) {
+      final a = b[h.m.fr][h.m.fc];
+      b[h.m.fr][h.m.fc] = p;
+      b[h.m.tr][h.m.tc] = a;
+    } else {
+      p.up = h.wasUp;
+      b[h.m.fr][h.m.fc] = p;
+      b[h.m.tr][h.m.tc] = h.cap;
+      final c = h.cap;
+      if (c != null) {
+        c.up = h.capWasUp;
+        (c.side == Side.red ? deadRed : deadBlack).remove(c);
+      }
     }
     turn = h.prevTurn;
     winner = null;
     last = _hist.isEmpty ? null : _hist.last.m;
   }
-}
