@@ -34,6 +34,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   bool flip = false;
   bool strict = true;
   bool autoMate = true;
+  bool devFree = false;
+  bool devUsed = false;
   bool lost = false;
   String? over;
   bool _recorded = false;
@@ -42,12 +44,19 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     if (!online) return;
     if (over == null) {
       _recorded = false;
-    } else if (!_recorded) {
+    } else if (t == 'dev') {
+        devUsed = true;
+        final mv = Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int, msg['tc'] as int);
+        final a0 = game.b[mv.fr][mv.fc];
+        final t0 = game.b[mv.tr][mv.tc];
+        final cap = a0 != null && t0 != null && a0.side != t0.side;
+        if (game.devApply(mv)) _afterMove(mv, cap);
+      } else if (t == 'restart') {
       _recorded = true;
       final Side w = !game.hasKing(Side.red)
           ? Side.black
           : (!game.hasKing(Side.black) ? Side.red : game.turn.other);
-      app.recordResult(w == mySide);
+      if (!devUsed) app.recordResult(w == mySide);
     }
   }
   late final AnimationController _ac;
@@ -160,6 +169,10 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
   void onTap(int r, int c) {
     if (over != null || lost) return;
+    if (devFree && app.dev) {
+      _devTap(r, c);
+      return;
+    }
     if (online && game.turn != mySide) return;
     final p = game.b[r][c];
     if (sr != null) {
@@ -183,6 +196,34 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     select(r, c);
   }
 
+  void _devTap(int r, int c) {
+    final p = game.b[r][c];
+    if (sr == null) {
+      if (p == null) return;
+      setState(() {
+        sr = r;
+        sc = c;
+        hints = [];
+      });
+      return;
+    }
+    if (sr == r && sc == c) {
+      setState(clearSel);
+      return;
+    }
+    final mv = Move(sr!, sc!, r, c);
+    final a = game.b[mv.fr][mv.fc];
+    final cap = a != null && p != null && a.side != p.side;
+    if (game.devApply(mv)) {
+      devUsed = true;
+      if (online) {
+        m!.link.send({'type': 'dev', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
+      }
+      setState(() => _afterMove(mv, cap));
+    } else {
+      setState(clearSel);
+    }
+  }
   void undo() {
     setState(() {
       game.undo();
@@ -222,6 +263,23 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           body: SafeArea(
             child: Column(
               children: [
+                if (app.dev)
+                      LitToggle(
+                        icon: Icons.build,
+                        label: tr('自由行棋'),
+                        value: devFree,
+                        onChanged: (v) {
+                          setState(() {
+                            devFree = v;
+                            clearSel();
+                          });
+                          if (v) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(tr(
+                                    '自由行棋：点一个棋子，再点目标格。空格=移动，对方棋子=吃掉，己方棋子=调换位置；再点一次已选棋子可取消。'))));
+                          }
+                        },
+                      ),
                 SizedBox(
                   height: 44,
                   child: Row(
@@ -308,7 +366,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                           if (online) m!.link.send({'type': 'restart'});
                         },
                       ),
-                    if (widget.free && !online)
+                    if ((widget.free && !online) || app.dev)：
                       LitToggle(
                         icon: Icons.rule,
                         label: tr('规则校验'),
