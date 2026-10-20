@@ -299,6 +299,8 @@ class SettingsPage extends StatelessWidget {
                     Text(tr('开源仓库： https://github.com/Teshoul/Divine-Chinese-Chess')),
                     const SizedBox(height: 6),
                     Text('${tr('版本')} 1.5.0'),
+                    const SizedBox(height: 6),
+                    Text('${tr('存储状态')}：${app.storageStatus}', style: const TextStyle(fontSize: 12)),
                   ],
                 ),
               ),
