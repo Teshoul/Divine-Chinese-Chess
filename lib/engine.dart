@@ -300,7 +300,25 @@ List<Move> legalMoves(int r, int c) {
     }
     return true;
   }
-  
+
+  /// 开发者：无视规则移动 / 吃子 / 调换
+  bool devApply(Move m) {
+    if (m.fr == m.tr && m.fc == m.tc) return false;
+    final p = b[m.fr][m.fc];
+    if (p == null) return false;
+    final t = b[m.tr][m.tc];
+    if (t != null && t.side == p.side) {
+      history.add(MoveRecord(m, null, turn, swap: true));
+      b[m.fr][m.fc] = t;
+      b[m.tr][m.tc] = p;
+      return true;
+    }
+    history.add(MoveRecord(m, t, turn));
+    b[m.tr][m.tc] = p;
+    b[m.fr][m.fc] = null;
+    if (p.side == turn) turn = turn.other;
+    return true;
+  }
   bool play(Move m, {bool strict = true}) {
     final p = b[m.fr][m.fc];
     if (p == null) return false;
