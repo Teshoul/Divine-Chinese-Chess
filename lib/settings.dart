@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'festival.dart';
 import 'items.dart';
 
@@ -233,6 +232,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   String prankOff = '';
   bool dev = false;
   bool tampered = false;
+  String storageStatus = '读取中…';
   final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
   final Set<String> unlocked = <String>{};
   final Set<String> owned = <String>{};
@@ -255,13 +255,20 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   int wins = 0, losses = 0, launches = 0;
 
   Brightness sysB = Brightness.light;
-  SharedPreferences? _sp;
   Timer? _timer;
   bool _observing = false;
   bool _pending = false;
-  Future<void> _chain = Future<void>.value();
+  bool _loaded = false;
+  final List<String> _dirs = <String>[];
   DateTime? _pausedAt;
   DateTime? _extAt;
+
+  static const List<String> _stateNames = [
+    'state_v3.json',
+    'state_v3.bak',
+    'state_v3.prev',
+    'state_v2.json',
+  ];
 
   List<Preset> get presets =>
       unlocked.contains('divine') ? <Preset>[...kPresets, kDivine] : kPresets;
@@ -309,46 +316,64 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     return isDark ? Color.lerp(c, Colors.black, 0.6) : c;
   }
 
-  // ───────────── 存取 ─────────────
-
-  Future<File> _stateFile() async {
-    final d = await getApplicationDocumentsDirectory();
-    return File('${d.path}/state_v2.json');
-  }
+  // ───────────── 存取（纯文件，不依赖任何插件）─────────────
 
   Future<void> load() async {
-    final sp = await SharedPreferences.getInstance();
-    _sp = sp;
     if (!_observing) {
       _observing = true;
       WidgetsBinding.instance.addObserver(this);
     }
-    Map<String, dynamic>? a, b;
-    final s = sp.getString('app_v1');
-    if (s != null) {
-      try {
-        final x = jsonDecode(s);
-        if (x is Map) a = Map<String, dynamic>.from(x);
-      } catch (_) {}
-    }
     try {
-      final f = await _stateFile();
-      if (f.existsSync()) {
-        final x = jsonDecode(await f.readAsString());
-        if (x is Map) b = Map<String, dynamic>.from(x);
-      }
+      final d = await getApplicationDocumentsDirectory().timeout(const Duration(seconds: 3));
+      _dirs.add(d.path);
     } catch (_) {}
-    Map<String, dynamic>? pick = a ?? b;
-    if (a != null && b != null) pick = _tsOf(b) > _tsOf(a) ? b : a;
-    if (pick != null) {
+    try {
+      final d = await getApplicationSupportDirectory().timeout(const Duration(seconds: 3));
+      if (!_dirs.contains(d.path)) _dirs.add(d.path);
+    } catch (_) {}
+
+    Map<String, dynamic>? best;
+    var bestSrc = '';
+    var found = 0;
+    for (final dir in _dirs) {
+      for (final n in _stateNames) {
+        try {
+          final f = File('$dir/$n');
+          if (!f.existsSync()) continue;
+          final x = jsonDecode(f.readAsStringSync());
+          if (x is! Map) continue;
+          final m = Map<String, dynamic>.from(x);
+          found++;
+          if (best == null || _tsOf(m) > _tsOf(best)) {
+            best = m;
+            bestSrc = n;
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (best != null) {
       try {
-        _read(pick);
-        dev = pick['dev'] == true;
-      } catch (_) {}
+        _read(best);
+        dev = best['dev'] == true;
+        storageStatus = '已读取（$bestSrc，共 $found 份）';
+      } catch (e) {
+        storageStatus = '读取出错：$e';
+      }
+      for (final dir in _dirs) {
+        try {
+          final f = File('$dir/state_v3.json');
+          if (f.existsSync()) f.copySync('$dir/state_v3.prev');
+        } catch (_) {}
+      }
+    } else {
+      storageStatus = _dirs.isEmpty ? '无法访问存储目录' : '没有找到旧数据（首次运行，或数据已被清除）';
     }
     if (dev) grantAll();
+    _loaded = true;
     launches++;
-    flush();
+    _write();
+    notifyListeners();
   }
 
   void beginExternal() {
@@ -365,7 +390,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         _extAt = null;
         if (DateTime.now().difference(e).inMinutes < 10) return;
       }
-      if (p != null && DateTime.now().difference(p).inSeconds >= 10) {
+      if (_loaded && p != null && DateTime.now().difference(p).inSeconds >= 10) {
         launches++;
         flush();
         notifyListeners();
@@ -491,26 +516,31 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'ssig': signText('$wins|$losses|$launches'),
       };
 
+  /// 同步写入：写完才返回；先写临时文件再改名，避免写一半被杀掉
   void _write() {
+    if (!_loaded) return;
+    String s;
     try {
-      final s = jsonEncode(_json());
-      _sp?.setString('app_v1', s);
-      _chain = _chain.then((_) => _writeFile(s));
-    } catch (_) {}
-  }
-
-  Future<void> _writeFile(String s) async {
-    try {
-      final f = await _stateFile();
-      final tmp = File('${f.path}.tmp');
-      await tmp.writeAsString(s, flush: true);
-      await tmp.rename(f.path);
-    } catch (_) {}
+      s = jsonEncode(_json());
+    } catch (e) {
+      storageStatus = '保存失败（编码）：$e';
+      return;
+    }
+    for (final dir in _dirs) {
+      try {
+        final tmp = File('$dir/state_v3.tmp');
+        tmp.writeAsStringSync(s, flush: true);
+        tmp.renameSync('$dir/state_v3.json');
+        File('$dir/state_v3.bak').writeAsStringSync(s, flush: true);
+      } catch (e) {
+        storageStatus = '保存失败：$e';
+      }
+    }
   }
 
   void _later() {
     _timer?.cancel();
-    _timer = Timer(const Duration(milliseconds: 300), _write);
+    _timer = Timer(const Duration(milliseconds: 200), _write);
   }
 
   /// 立刻写入（切后台、记录战绩时用）
@@ -655,6 +685,12 @@ Future<String?> pickImage() async {
     final ext = (dot > 0 && x.path.length - dot <= 5) ? x.path.substring(dot) : '.jpg';
     final f = await File(x.path)
         .copy('${dir.path}/img_${DateTime.now().millisecondsSinceEpoch}$ext');
+    // 删掉选图时系统留在缓存里的副本，避免占用翻倍
+    if (x.path.contains('/cache/')) {
+      try {
+        await File(x.path).delete();
+      } catch (_) {}
+    }
     return f.path;
   } catch (_) {
     return null;
