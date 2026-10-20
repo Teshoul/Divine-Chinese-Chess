@@ -227,7 +227,8 @@ class Game {
     return false;
   }
 
-List<Move> legalMoves(int r, int c) {
+  /// 不再强制应将：每个棋子只受自己的走法限制，将帅对面时可以直接吃
+  List<Move> legalMoves(int r, int c) {
     final p = b[r][c];
     if (p == null) return [];
     final res = pseudoMoves(r, c);
@@ -243,7 +244,7 @@ List<Move> legalMoves(int r, int c) {
       }
     }
     return res;
-}
+  }
 
   bool hasLegalMove(Side s) {
     for (var r = 0; r < 10; r++) {
@@ -319,13 +320,13 @@ List<Move> legalMoves(int r, int c) {
     if (p.side == turn) turn = turn.other;
     return true;
   }
+
   bool play(Move m, {bool strict = true}) {
     final p = b[m.fr][m.fc];
     if (p == null) return false;
     if (strict) {
       if (p.side != turn) return false;
-      final ok = legalMoves(m.fr, m.fc)
-          .any((x) => x.tr == m.tr && x.tc == m.tc);
+      final ok = legalMoves(m.fr, m.fc).any((x) => x.tr == m.tr && x.tc == m.tc);
       if (!ok) return false;
     } else {
       if (m.fr == m.tr && m.fc == m.tc) return false;
@@ -353,3 +354,4 @@ List<Move> legalMoves(int r, int c) {
     }
     turn = h.prevTurn;
   }
+}
