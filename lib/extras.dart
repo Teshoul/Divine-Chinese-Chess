@@ -23,9 +23,9 @@ String runCode(String raw) {
     return '已解锁隐藏主题「神」和动态头像';
   }
   if (k == '投降') {
-    if (!prank.active) return '今天不是愚人节，无需投降';
+    if (!prank.active) return '你今天在投降什么啊？！臣服于我了嘛QAQ';
     prank.setHonest();
-    return '口令生效：白旗这次会老实让你点';
+    return '好叭，这回我会老实让你点的ᯠ˶｡  ̫`｡˶ᯄ੭';
   }
   return '口令无效';
 }
@@ -83,7 +83,8 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
       ),
     );
     if (ok != true) return;
-    final r = await importBackup();
+    
+final r = await importBackup(context);
     if (!mounted) return;
     if (r == 'ok') _toast('导入成功');
     if (r == 'sig') _toast('数据校验失败，你修改文件了对吧？ᯠ˶｡  ̫`｡˶ᯄ੭');
