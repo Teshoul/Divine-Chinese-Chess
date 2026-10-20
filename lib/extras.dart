@@ -65,10 +65,10 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
   }
 
   Future<void> _export() async {
-    final r = await exportBackup(context);
+    final r = await importBackup(context);
     if (!mounted) return;
     if (r == 'ok') _toast('备份已保存');
-    if (r == 'fail') _toast('导出失败');
+    if (r.startsWith('fail')) _toast('导出失败：${r.length > 5 ? r.substring(5) : ''}');
   }
 
   Future<void> _import() async {
@@ -86,8 +86,8 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
     final r = await importBackup();
     if (!mounted) return;
     if (r == 'ok') _toast('导入成功');
-    if (r == 'sig') _toast('数据校验失败，可能被修改过');
-    if (r == 'bad') _toast('导入失败：文件不是有效的备份压缩包');
+    if (r == 'sig') _toast('数据校验失败，你修改文件了对吧？ᯠ˶｡  ̫`｡˶ᯄ੭');
+    if (r.startsWith('bad')) _toast('导入失败：${r.length > 4 ? r.substring(4) : ''}');
   }
 
   Widget _card(String title, Widget child) {
