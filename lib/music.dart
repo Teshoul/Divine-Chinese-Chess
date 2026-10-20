@@ -168,9 +168,22 @@ class MusicService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> replaceAll(List<Track> list) async {
+    await _p?.stop();
+    tracks
+      ..clear()
+      ..addAll(list);
+    index = -1;
+    playing = false;
+    pos = Duration.zero;
+    dur = Duration.zero;
+    await _save();
+    notifyListeners();
+  }
   Future<int> addFiles() async {
     await init();
     FilePickerResult? r;
+    app.beginExternal();
     try {
       r = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -260,7 +273,7 @@ class _MusicPageState extends State<MusicPage> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                     if (m.error)
-                      Text(tr('无法播放该文件'), style: TextStyle(color: cs.error)),
+                      Text(tr('没办法播放该文件ᯠ˶｡  ̫`｡˶ᯄ੭'), style: TextStyle(color: cs.error)),
                     Slider(
                       value: v,
                       min: 0,
