@@ -1,24 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'backup.dart';
 import 'festival.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
 
+/// 开发者口令只存校验值，不存明文
+const String kDevHash = '4390a8d6071ddb3a';
+bool isDevCode(String raw) => signText('dev|${raw.trim()}') == kDevHash;
+
 /// 口令表：以后想加彩蛋，在这里加一条就行
 String runCode(String raw) {
+  if (isDevCode(raw)) {
+    if (app.dev) return '已在开发者模式中';
+    app.enterDev();
+    return '已进入开发者模式，全部道具已发放';
+  }
   final k = raw.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   if (k == 'divine chinese chess') {
-    if (app.hasDivine) return '该主题已解锁';
-    app.change(() => app.unlocked.add('divine'));
+    if (app.hasDivine && app.owns('badge_divine')) return '该主题已解锁';
+    app.unlockDivine();
     return '已解锁隐藏主题「神」和动态头像';
   }
   if (k == '投降') {
     if (!prank.active) return '今天不是愚人节，无需投降';
     prank.setHonest();
-    return '好啦，这回我会乖乖的啦ᯠ  _   ̫  _ ̥ ᯄ ੭';
+    return '口令生效：白旗这次会老实让你点';
   }
-  return '我没写过这个，是你输错了嘛？再核对一下试试ᯠ˶｡  ̫`｡˶ᯄ੭';
+  return '口令无效';
 }
 
 class ExtrasSections extends StatefulWidget {
@@ -56,15 +65,17 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
   }
 
   Future<void> _export() async {
-    await Clipboard.setData(ClipboardData(text: app.exportText()));
-    _toast('数据已复制到剪贴板，请粘贴保存好');
+    final r = await exportBackup(context);
+    if (!mounted) return;
+    if (r == 'ok') _toast('备份已保存');
+    if (r == 'fail') _toast('导出失败');
   }
 
   Future<void> _import() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        content: Text(tr('导入会覆盖当前的资料、设置和战绩，确定继续？')),
+        content: Text(tr('导入会覆盖当前的资料、设置、战绩、头像和音乐，确定继续？')),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('取消'))),
           FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('确定'))),
@@ -72,15 +83,11 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
       ),
     );
     if (ok != true) return;
-    final d = await Clipboard.getData(Clipboard.kTextPlain);
-    final r = app.importText(d?.text ?? '');
-    if (r == null) {
-      _toast('导入成功');
-    } else if (r == 'sig') {
-      _toast('数据校验失败，可能被修改过');
-    } else {
-      _toast('剪贴板里没有有效数据');
-    }
+    final r = await importBackup();
+    if (!mounted) return;
+    if (r == 'ok') _toast('导入成功');
+    if (r == 'sig') _toast('数据校验失败，可能被修改过');
+    if (r == 'bad') _toast('导入失败：文件不是有效的备份压缩包');
   }
 
   Widget _card(String title, Widget child) {
@@ -99,6 +106,64 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
             child,
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _devCard(ColorScheme cs) {
+    return _card(
+      '开发者选项',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tr('开发者模式已开启'),
+              style: TextStyle(color: app.primary, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(tr('点击战绩数字可修改（仅开发者）'),
+              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+          const SizedBox(height: 14),
+          Text(tr('节日预览'), style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(tr('点一下预览，再点一下取消'),
+              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final f in kFestivals)
+                LitToggle(
+                  wide: true,
+                  label: tr(f.name),
+                  value: app.festPreview == f.id,
+                  onChanged: (v) => _preview(v ? f.id : ''),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () {
+                  app.change(() => app.grantAll());
+                  _toast('道具已发放');
+                },
+                icon: const Icon(Icons.inventory_2),
+                label: Text(tr('重新发放全部道具')),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => app.exitDev(),
+                icon: const Icon(Icons.logout),
+                label: Text(tr('退出开发者模式')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(tr('未来的测试功能会出现在这里'),
+              style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
+        ],
       ),
     );
   }
@@ -132,23 +197,6 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
                         : tr('今天没有节日'),
                     style: TextStyle(color: cs.onSurfaceVariant),
                   ),
-                  const SizedBox(height: 4),
-                  Text(tr('点一下预览，再点一下取消'),
-                      style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final f in kFestivals)
-                        LitToggle(
-                          wide: true,
-                          label: tr(f.name),
-                          value: app.festPreview == f.id,
-                          onChanged: (v) => _preview(v ? f.id : ''),
-                        ),
-                    ],
-                  ),
                 ],
               ),
             ),
@@ -160,6 +208,9 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
                   TextField(
                     controller: c,
                     onSubmitted: (_) => _run(),
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    textCapitalization: TextCapitalization.none,
                     decoration: InputDecoration(
                       hintText: tr('输入口令'),
                       isDense: true,
@@ -179,14 +230,16 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(tr('战绩由联机对战自动记录，不能手动修改。'),
+                  Text(tr('战绩由联机对战自动记录，不能手动修改'),
                       style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
-                  Text(tr('导出内容不含头像和图片。'),
+                  const SizedBox(height: 2),
+                  Text(
+                      tr('导出的压缩包包含头像、头像库、装扮道具、自定义颜色、背景图和音乐；战绩带校验码，被改动的备份无法导入。'),
                       style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13)),
                   if (app.tampered)
                     Padding(
                       padding: const EdgeInsets.only(top: 6),
-                      child: Text(tr('检测到战绩数据异常，已重置。'),
+                      child: Text(tr('你偷偷改数据了对吧ᯠ˶｡  ̫`｡˶ᯄ੭'),
                           style: TextStyle(color: cs.error, fontSize: 13)),
                     ),
                   const SizedBox(height: 12),
@@ -209,6 +262,7 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
                 ],
               ),
             ),
+            if (app.dev) _devCard(cs),
           ],
         );
       },
