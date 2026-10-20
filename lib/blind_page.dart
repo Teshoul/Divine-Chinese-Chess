@@ -42,11 +42,13 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
       _recorded = false;
     } else if (!_recorded) {
       _recorded = true;
-      app.recordResult(w == mySide);
+      if (!devUsed) app.recordResult(w == mySide);
     }
   }
   bool lastCap = false;
   bool lastReveal = false;
+  bool devFree = false;
+  bool devUsed = false;
   BPiece? lastDead;
   late final AnimationController _ac;
   late final AnimationController _pulse;
@@ -118,6 +120,10 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
       if (t == 'move') {
         _apply(Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int, msg['tc'] as int));
         clearSel();
+      } else if (t == 'dev') {
+        devUsed = true;
+        _applyDev(Move(msg['fr'] as int, msg['fc'] as int, msg['tr'] as int, msg['tc'] as int));
+        clearSel();
       } else if (t == 'start') {
         cfg = BlindConfig.fromJson(Map<String, dynamic>.from(msg['cfg'] as Map));
         game = BlindGame(cfg, msg['seed'] as int);
@@ -131,6 +137,10 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
 
   void onTap(int r, int c) {
     if (game.winner != null || lost) return;
+    if (devFree && app.dev) {
+      _devTap(r, c);
+      return;
+    }
     if (online && game.turn != mySide) return;
     final p = game.b[r][c];
     if (sr != null && hints.any((x) => x.tr == r && x.tc == c)) {
@@ -156,6 +166,46 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
     }
   }
 
+  bool _applyDev(Move mv) {
+    final p = game.b[mv.fr][mv.fc];
+    final t = game.b[mv.tr][mv.tc];
+    final wasHidden = p != null && !p.up;
+    final swap = p != null && t != null && t.owner == p.owner;
+    if (!game.devApply(mv)) return false;
+    lastCap = !swap && t != null;
+    lastReveal = !swap && wasHidden && p.up;
+    lastDead = swap ? null : t;
+    _ac.forward(from: 0);
+    if (lastCap) _pulse.forward(from: 0);
+    return true;
+  }
+
+  void _devTap(int r, int c) {
+    final p = game.b[r][c];
+    if (sr == null) {
+      if (p == null) return;
+      setState(() {
+        sr = r;
+        sc = c;
+        hints = [];
+      });
+      return;
+    }
+    if (sr == r && sc == c) {
+      setState(clearSel);
+      return;
+    }
+    final mv = Move(sr!, sc!, r, c);
+    setState(() {
+      if (_applyDev(mv)) {
+        devUsed = true;
+        if (online) {
+          m!.link.send({'type': 'dev', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
+        }
+      }
+      clearSel();
+    });
+  }
   void restart() {
     final seed = Random().nextInt(1 << 30);
     setState(() {
@@ -170,7 +220,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
 
   String get status {
     if (game.winner != null) return trf('{s}获胜', {'s': _name(game.winner!)});
-    if (lost) return tr('对方已断开连接');
+    if (lost) return tr('对方已断开连接，ta是有什么事嘛ᯠ˶｡  ̫`｡˶ᯄ੭');
     if (online) return tr(game.turn == mySide ? '轮到你走棋' : '等待对方走棋…');
     return trf('{s}走棋', {'s': _name(game.turn)});
   }
@@ -196,6 +246,23 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      if (app.dev)
+                      LitToggle(
+                        icon: Icons.build,
+                        label: tr('自由行棋'),
+                        value: devFree,
+                        onChanged: (v) {
+                          setState(() {
+                            devFree = v;
+                            clearSel();
+                          });
+                          if (v) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(tr(
+                                    '自由行棋：点一个棋子，再点目标格。空格=移动，对方棋子=吃掉，己方棋子=调换位置；再点一次已选棋子可取消。'))));
+                          }
+                        },
+                      ),
                       sideTag(context, Side.black,
                           active: game.winner == null && game.turn == Side.black,
                           mine: online && mySide == Side.black),
