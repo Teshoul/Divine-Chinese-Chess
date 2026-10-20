@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:ui' show ImageFilter, lerpDouble;
 import 'package:flutter/material.dart';
 import 'glitch.dart';
+import 'items.dart';
 import 'liquid.dart';
 import 'settings.dart';
 import 'strings.dart';
@@ -22,8 +23,10 @@ class AvatarBox extends StatelessWidget {
       builder: (context, _, __) {
         final cs = Theme.of(context).colorScheme;
         final p = app.avatar;
-        final isStar = p == kStarAvatar && app.hasDivine;
-        final f = (!isStar && p != null && File(p).existsSync()) ? File(p) : null;
+        final isStar = p == kStarAvatar && app.owns('avatar_star');
+        final f = (!isStar && p != null && p != kStarAvatar && File(p).existsSync())
+            ? File(p)
+            : null;
         final r = size * 0.2;
         final bw = max(2.0, size * 0.045);
         final Widget inner = isStar
@@ -58,7 +61,8 @@ class AvatarBox extends StatelessWidget {
             ),
           ),
         );
-        if (!(badge && app.hasDivine && size >= 36)) return box;
+        final corner = app.eqCorner;
+        if (!badge || corner == null || size < 36) return box;
         return SizedBox(
           width: size,
           height: size,
@@ -69,7 +73,7 @@ class AvatarBox extends StatelessWidget {
               Positioned(
                 right: -size * 0.14,
                 bottom: -size * 0.14,
-                child: Opacity(opacity: 1 - x, child: StarBadge(size: size * 0.42)),
+                child: Opacity(opacity: 1 - x, child: CornerView(id: corner, size: size * 0.42)),
               ),
             ],
           ),
@@ -93,7 +97,7 @@ class ProfileLayer extends StatelessWidget {
     final top = mq.padding.top + 12;
     final origin = Rect.fromLTWH(16, top, 52, 52);
     final ty = top + 52 + 14;
-    final th = min(size.height - ty - mq.padding.bottom - 20, 700.0);
+    final th = min(size.height - ty - mq.padding.bottom - 20, 720.0);
     final tw = size.width - 32;
     final target = Rect.fromLTWH(16, ty, tw, th);
 
@@ -274,6 +278,28 @@ class _ProfileContentState extends State<ProfileContent> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _editNum(String title, int cur, void Function(int) set) async {
+    final c = TextEditingController(text: '$cur');
+    final v = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(trf('修改{x}', {'x': title})),
+        content: TextField(controller: c, keyboardType: TextInputType.number, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('取消'))),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, int.tryParse(c.text) ?? cur),
+            child: Text(tr('确定')),
+          ),
+        ],
+      ),
+    );
+    if (v != null) {
+      setState(() => set(v < 0 ? 0 : v));
+      app.flush();
+    }
+  }
+
   Widget _thumb(String p) {
     final cs = Theme.of(context).colorScheme;
     final sel = app.avatar == p;
@@ -312,7 +338,7 @@ class _ProfileContentState extends State<ProfileContent> {
           child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
-              if (app.hasDivine) _thumb(kStarAvatar),
+              if (app.owns('avatar_star')) _thumb(kStarAvatar),
               for (final p in app.avatars) _thumb(p),
               GestureDetector(
                 onTap: _addAvatar,
@@ -335,19 +361,106 @@ class _ProfileContentState extends State<ProfileContent> {
     );
   }
 
-  Widget _stat(String label, int v) {
+  Widget _itemTile(Item it, bool on, VoidCallback tap) {
+    final cs = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: tap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(app.toggleShape == 0 ? 20 : 8),
+          color: on ? app.primary.withOpacity(0.28) : cs.onSurface.withOpacity(0.05),
+          border: Border.all(
+              color: on ? app.primary : cs.outline.withOpacity(0.5), width: on ? 2 : 1.2),
+          boxShadow:
+              on ? [BoxShadow(color: app.primary.withOpacity(0.45), blurRadius: 10)] : const [],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            it.kind == ItemKind.badge
+                ? BadgeView(id: it.id, h: 18)
+                : CornerView(id: it.id, size: 26),
+            const SizedBox(width: 8),
+            Text(tr(it.name), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _wardrobe() {
+    final cs = Theme.of(context).colorScheme;
+    final badges = [
+      for (final it in kItems)
+        if (it.kind == ItemKind.badge && app.owns(it.id)) it
+    ];
+    final corners = [
+      for (final it in kItems)
+        if (it.kind == ItemKind.corner && app.owns(it.id)) it
+    ];
+    if (badges.isEmpty && corners.isEmpty) return const SizedBox.shrink();
+    final small = TextStyle(fontSize: 12, color: cs.onSurfaceVariant);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(tr('装扮'), style: const TextStyle(fontWeight: FontWeight.w700)),
+          if (badges.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(tr('徽标（可叠加，按佩戴顺序排在名字后面）'), style: small),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final it in badges)
+                  _itemTile(it, app.eqBadges.contains(it.id), () {
+                    app.toggleBadge(it.id);
+                    setState(() {});
+                  }),
+              ],
+            ),
+          ],
+          if (corners.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(tr('头像角标（一次只能戴一个）'), style: small),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final it in corners)
+                  _itemTile(it, app.eqCorner == it.id, () {
+                    app.setCorner(it.id);
+                    setState(() {});
+                  }),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _stat(String label, int v, void Function(int) set) {
     final cs = Theme.of(context).colorScheme;
     return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: styled(cs.surfaceContainerHighest, r: app.cardR),
-        child: Column(
-          children: [
-            Text('$v', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 2),
-            Text(label, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-          ],
+      child: GestureDetector(
+        onTap: app.dev ? () => _editNum(label, v, set) : null,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: styled(cs.surfaceContainerHighest, r: app.cardR),
+          child: Column(
+            children: [
+              Text('$v', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(label, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+            ],
+          ),
         ),
       ),
     );
@@ -367,22 +480,32 @@ class _ProfileContentState extends State<ProfileContent> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: nameC,
-                          onChanged: (v) => app.quiet(() => app.name = v),
-                          decoration: InputDecoration(labelText: tr('名字'), isDense: true),
-                        ),
-                      ),
-                      if (app.hasDivine) ...[
-                        const SizedBox(width: 8),
-                        const DivineMark(size: 26),
-                      ],
-                    ],
+                  TextField(
+                    controller: nameC,
+                    onChanged: (v) => setState(() => app.quiet(() => app.name = v)),
+                    decoration: InputDecoration(labelText: tr('名字'), isDense: true),
                   ),
                   const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          app.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: BadgesRow(ids: List<String>.from(app.eqBadges), h: 18),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
                   Text(tr('点击更换（来换一个可爱点的头像ᶻz ₍^_   ̫ _^₎喵...）'),
                       style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                 ],
@@ -393,6 +516,7 @@ class _ProfileContentState extends State<ProfileContent> {
         const SizedBox(height: 16),
         _gallery(),
         const SizedBox(height: 16),
+        _wardrobe(),
         TextField(
           controller: uidC,
           onChanged: (v) => app.quiet(() => app.uid = v),
@@ -436,9 +560,9 @@ class _ProfileContentState extends State<ProfileContent> {
         const SizedBox(height: 10),
         Row(
           children: [
-            _stat(tr('胜'), app.wins),
-            _stat(tr('负'), app.losses),
-            _stat(tr('启动次数'), app.launches),
+            _stat(tr('胜'), app.wins, (v) => app.wins = v),
+            _stat(tr('负'), app.losses, (v) => app.losses = v),
+            _stat(tr('启动次数'), app.launches, (v) => app.launches = v),
           ],
         ),
       ],
