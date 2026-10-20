@@ -9,9 +9,7 @@ class BlindConfig {
   bool advElephantLimit;
 
   BlindConfig(
-      {List<List<bool>>? up,
-      this.kingInPalace = true,
-      this.advElephantLimit = false})
+      {List<List<bool>>? up, this.kingInPalace = true, this.advElephantLimit = false})
       : up = up ?? List.generate(10, (_) => List<bool>.filled(9, false));
 
   static BlindConfig rule(bool Function(PType, Side) f) {
@@ -276,6 +274,7 @@ class BlindGame {
     if (t != null && t.type == PType.king) winner = t.side.other;
     return true;
   }
+
   bool play(Move m) {
     if (winner != null) return false;
     final p = b[m.fr][m.fc];
@@ -323,3 +322,4 @@ class BlindGame {
     winner = null;
     last = _hist.isEmpty ? null : _hist.last.m;
   }
+}
