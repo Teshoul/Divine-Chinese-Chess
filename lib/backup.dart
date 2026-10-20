@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
@@ -21,57 +22,95 @@ String _defaultName() {
   return 'Divine-Chess-${n.year}${two(n.month)}${two(n.day)}';
 }
 
-Future<Uint8List> buildBackupZip() async {
-  await MusicService.I.init();
-  final snap = app.exportMap();
+// ───────── 在后台线程里做重活，界面不会卡死 ─────────
+
+String _zipJob(String out, List<List<String>> pairs, String body, String sig) {
   final ar = Archive();
-  final done = <String, String>{};
-  var n = 0;
-
-  Future<String?> put(String? path, String dir) async {
-    if (path == null || path.startsWith('builtin:')) return path;
-    final old = done[path];
-    if (old != null) return old;
-    final f = File(path);
-    if (!f.existsSync()) return null;
-    final bytes = await f.readAsBytes();
-    final entry = '$dir/${n++}${_ext(path)}';
-    ar.addFile(ArchiveFile(entry, bytes.length, bytes));
-    done[path] = entry;
-    return entry;
+  for (final p in pairs) {
+    final bytes = File(p[0]).readAsBytesSync();
+    final f = ArchiveFile(p[1], bytes.length, bytes);
+    f.compress = false; // 音频和图片本来就压缩过，直接存储，速度快很多
+    ar.addFile(f);
   }
-
-  snap['avatar'] = await put(snap['avatar'] as String?, 'files');
-  final list = <String>[];
-  for (final p in (snap['avatars'] as List)) {
-    final e = await put(p as String?, 'files');
-    if (e != null) list.add(e);
-  }
-  snap['avatars'] = list;
-  final ly = snap['layers'];
-  if (ly is Map) {
-    for (final k in ly.keys.toList()) {
-      final v = ly[k];
-      if (v is Map) v['path'] = await put(v['path'] as String?, 'files');
-    }
-  }
-  final music = <Map<String, dynamic>>[];
-  for (final t in MusicService.I.tracks) {
-    final e = await put(t.path, 'music');
-    if (e != null) music.add({'e': e, 'n': t.name});
-  }
-  snap['music'] = music;
-
-  final body = jsonEncode(snap);
   final bb = utf8.encode(body);
   ar.addFile(ArchiveFile('data.json', bb.length, bb));
-  final sg = utf8.encode(signText(body));
+  final sg = utf8.encode(sig);
   ar.addFile(ArchiveFile('sig.txt', sg.length, sg));
-  final out = ZipEncoder().encode(ar);
-  return Uint8List.fromList(out ?? <int>[]);
+  final data = ZipEncoder().encode(ar);
+  if (data == null) throw StateError('zip failed');
+  File(out).writeAsBytesSync(data, flush: true);
+  return out;
 }
 
-/// 返回 'ok' | 'cancel' | 'fail'
+Future<String> _zipInIsolate(
+    String out, List<List<String>> pairs, String body, String sig) {
+  return Isolate.run(() => _zipJob(out, pairs, body, sig));
+}
+
+Map<String, Object> _unzipJob(String zipPath, String docs, String music, int stamp) {
+  final bytes = File(zipPath).readAsBytesSync();
+  final ar = ZipDecoder().decodeBytes(bytes);
+  var body = '';
+  var sig = '';
+  final files = <String, String>{};
+  for (final e in ar) {
+    if (!e.isFile) continue;
+    final name = e.name;
+    final data = e.content as List<int>;
+    if (name == 'data.json') {
+      body = utf8.decode(data);
+      continue;
+    }
+    if (name == 'sig.txt') {
+      sig = utf8.decode(data).trim();
+      continue;
+    }
+    final isMusic = name.startsWith('music/');
+    if (!isMusic && !name.startsWith('files/')) continue;
+    final base = name.split('/').last.replaceAll(RegExp(r'[^\w.\-]'), '_');
+    final dir = isMusic ? music : docs;
+    Directory(dir).createSync(recursive: true);
+    final dest = '$dir/imp_${stamp}_$base';
+    File(dest).writeAsBytesSync(data);
+    files[name] = dest;
+  }
+  return <String, Object>{'body': body, 'sig': sig, 'files': files};
+}
+
+Future<Map<String, Object>> _unzipInIsolate(
+    String zipPath, String docs, String music, int stamp) {
+  return Isolate.run(() => _unzipJob(zipPath, docs, music, stamp));
+}
+
+// ───────── 进度提示 ─────────
+
+void _showBusy(BuildContext context, String msg) {
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        content: Row(
+          children: [
+            const SizedBox(
+                width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 3)),
+            const SizedBox(width: 16),
+            Expanded(child: Text(msg)),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+void _hideBusy(BuildContext context) {
+  if (context.mounted) Navigator.of(context).pop();
+}
+
+// ───────── 导出 ─────────
+
+/// 返回 'ok' | 'cancel' | 'fail:原因'
 Future<String> exportBackup(BuildContext context) async {
   final ctl = TextEditingController(text: _defaultName());
   final name = await showDialog<String>(
@@ -82,7 +121,7 @@ Future<String> exportBackup(BuildContext context) async {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(tr('给备份压缩包起个名字，方便你找到他(៸៸᳐⦁⩊⦁៸៸᳐ )੭（可随时再改）')),
+          Text(tr('给备份压缩包起个名字（可随时再改）')),
           const SizedBox(height: 10),
           TextField(
             controller: ctl,
@@ -94,16 +133,72 @@ Future<String> exportBackup(BuildContext context) async {
       actions: [
         TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('取消'))),
         FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctl.text.trim()),
-            child: Text(tr('保存'))),
+            onPressed: () => Navigator.pop(ctx, ctl.text.trim()), child: Text(tr('保存'))),
       ],
     ),
   );
   if (name == null) return 'cancel';
+  if (!context.mounted) return 'cancel';
   var safe = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   if (safe.isEmpty) safe = _defaultName();
+
+  _showBusy(context, tr('正在打包备份，请稍候…'));
+  String? tmp;
+  Uint8List? bytes;
   try {
-    final bytes = await buildBackupZip();
+    await MusicService.I.init();
+    final snap = app.exportMap();
+    final pairs = <List<String>>[];
+    final done = <String, String>{};
+    var n = 0;
+    String? put(String? path, String dir) {
+      if (path == null || path.startsWith('builtin:')) return path;
+      final old = done[path];
+      if (old != null) return old;
+      if (!File(path).existsSync()) return null;
+      final entry = '$dir/${n++}${_ext(path)}';
+      pairs.add([path, entry]);
+      done[path] = entry;
+      return entry;
+    }
+
+    snap['avatar'] = put(snap['avatar'] as String?, 'files');
+    final list = <String>[];
+    final avs = snap['avatars'];
+    if (avs is List) {
+      for (final p in avs) {
+        final e = put(p as String?, 'files');
+        if (e != null) list.add(e);
+      }
+    }
+    snap['avatars'] = list;
+    final ly = snap['layers'];
+    if (ly is Map) {
+      for (final k in ly.keys.toList()) {
+        final v = ly[k];
+        if (v is Map) v['path'] = put(v['path'] as String?, 'files');
+      }
+    }
+    final music = <Map<String, dynamic>>[];
+    for (final t in MusicService.I.tracks) {
+      final e = put(t.path, 'music');
+      if (e != null) music.add({'e': e, 'n': t.name});
+    }
+    snap['music'] = music;
+
+    final body = jsonEncode(snap);
+    final sig = signText(body);
+    final cache = await getTemporaryDirectory();
+    final out = '${cache.path}/backup_${DateTime.now().millisecondsSinceEpoch}.zip';
+    tmp = await _zipInIsolate(out, pairs, body, sig);
+    bytes = await File(tmp).readAsBytes();
+  } catch (e) {
+    _hideBusy(context);
+    return 'fail:$e';
+  }
+  _hideBusy(context);
+
+  try {
     app.beginExternal();
     final path = await FilePicker.platform.saveFile(
       dialogTitle: tr('保存备份'),
@@ -113,114 +208,92 @@ Future<String> exportBackup(BuildContext context) async {
       allowedExtensions: ['zip'],
     );
     return path == null ? 'cancel' : 'ok';
-  } catch (_) {
-    return 'fail';
+  } catch (e) {
+    return 'fail:$e';
+  } finally {
+    try {
+      if (tmp != null) File(tmp).deleteSync();
+    } catch (_) {}
+    try {
+      await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {}
   }
 }
 
-/// 返回 'ok' | 'cancel' | 'sig' | 'bad'
-Future<String> importBackup() async {
+// ───────── 导入 ─────────
+
+/// 返回 'ok' | 'cancel' | 'sig' | 'bad:原因'
+Future<String> importBackup(BuildContext context) async {
   app.beginExternal();
   FilePickerResult? r;
   try {
     r = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['zip'],
-      withData: true,
+      withData: false,
     );
-  } catch (_) {
-    return 'bad';
+  } catch (e) {
+    return 'bad:$e';
   }
   if (r == null || r.files.isEmpty) return 'cancel';
-  final pf = r.files.first;
-  Uint8List? bytes = pf.bytes;
-  if (bytes == null && pf.path != null) {
-    try {
-      bytes = await File(pf.path!).readAsBytes();
-    } catch (_) {}
-  }
-  if (bytes == null) return 'bad';
+  final zipPath = r.files.first.path;
+  if (zipPath == null) return 'bad:无法读取所选文件';
+  if (!context.mounted) return 'cancel';
 
-  Archive ar;
+  _showBusy(context, tr('正在导入，请稍候…'));
   try {
-    ar = ZipDecoder().decodeBytes(bytes);
-  } catch (_) {
-    return 'bad';
-  }
-  ArchiveFile? data, sig;
-  for (final e in ar) {
-    if (e.name == 'data.json') data = e;
-    if (e.name == 'sig.txt') sig = e;
-  }
-  if (data == null || sig == null) return 'bad';
-  String body = '';
-  try {
-    body = utf8.decode(data.content as List<int>);
-    if (signText(body) != utf8.decode(sig.content as List<int>).trim()) return 'sig';
-  } catch (_) {
-    return 'bad';
-  }
-  Map<String, dynamic> m;
-  try {
+    final docs = (await getApplicationDocumentsDirectory()).path;
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final res = await _unzipInIsolate(zipPath, docs, '$docs/music', stamp);
+    final body = res['body'] as String;
+    final sig = res['sig'] as String;
+    if (body.isEmpty || sig.isEmpty) return 'bad:压缩包里缺少数据文件';
+    if (signText(body) != sig) return 'sig';
+    final files = Map<String, String>.from(res['files'] as Map);
+
     final x = jsonDecode(body);
-    if (x is! Map) return 'bad';
-    m = Map<String, dynamic>.from(x);
-  } catch (_) {
-    return 'bad';
-  }
+    if (x is! Map) return 'bad:数据格式不对';
+    final m = Map<String, dynamic>.from(x);
 
-  final dir = await getApplicationDocumentsDirectory();
-  final stamp = DateTime.now().millisecondsSinceEpoch;
-  final out = <String, String>{};
-  for (final e in ar) {
-    if (!e.isFile) continue;
-    final isMusic = e.name.startsWith('music/');
-    if (!isMusic && !e.name.startsWith('files/')) continue;
-    final base = e.name.split('/').last.replaceAll(RegExp(r'[^\w.\-]'), '_');
-    final d = Directory(isMusic ? '${dir.path}/music' : dir.path);
-    if (!d.existsSync()) d.createSync(recursive: true);
-    final dest = '${d.path}/imp_${stamp}_$base';
-    try {
-      await File(dest).writeAsBytes(e.content as List<int>);
-      out[e.name] = dest;
-    } catch (_) {}
-  }
-
-  String? mp(dynamic v) =>
-      v is String ? (out[v] ?? (v.startsWith('builtin:') ? v : null)) : null;
-  m['avatar'] = mp(m['avatar']);
-  final av = <String>[];
-  final avl = m['avatars'];
-  if (avl is List) {
-    for (final x in avl) {
-      final p = mp(x);
-      if (p != null) av.add(p);
-    }
-  }
-  m['avatars'] = av;
-  final ly = m['layers'];
-  if (ly is Map) {
-    for (final k in ly.keys.toList()) {
-      final v = ly[k];
-      if (v is Map) v['path'] = mp(v['path']);
-    }
-  }
-  final tracks = <Track>[];
-  final ml = m['music'];
-  if (ml is List) {
-    for (final x in ml) {
-      if (x is Map) {
-        final p = mp(x['e']);
-        if (p != null) tracks.add(Track(p, '${x['n'] ?? ''}'));
+    String? mp(dynamic v) =>
+        v is String ? (files[v] ?? (v.startsWith('builtin:') ? v : null)) : null;
+    m['avatar'] = mp(m['avatar']);
+    final av = <String>[];
+    final avl = m['avatars'];
+    if (avl is List) {
+      for (final e in avl) {
+        final p = mp(e);
+        if (p != null) av.add(p);
       }
     }
-  }
-  try {
+    m['avatars'] = av;
+    final ly = m['layers'];
+    if (ly is Map) {
+      for (final k in ly.keys.toList()) {
+        final v = ly[k];
+        if (v is Map) v['path'] = mp(v['path']);
+      }
+    }
+    final tracks = <Track>[];
+    final ml = m['music'];
+    if (ml is List) {
+      for (final e in ml) {
+        if (e is Map) {
+          final p = mp(e['e']);
+          if (p != null) tracks.add(Track(p, '${e['n'] ?? ''}'));
+        }
+      }
+    }
     app.importMap(m);
     await MusicService.I.init();
     await MusicService.I.replaceAll(tracks);
-  } catch (_) {
-    return 'bad';
+    return 'ok';
+  } catch (e) {
+    return 'bad:$e';
+  } finally {
+    _hideBusy(context);
+    try {
+      await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {}
   }
-  return 'ok';
 }
