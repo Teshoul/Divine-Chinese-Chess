@@ -5,7 +5,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
@@ -30,55 +29,76 @@ class MusicService extends ChangeNotifier {
   int loop = 0; // 0 列表循环 1 单曲循环 2 顺序播放
   bool error = false;
   bool _ready = false;
+  String? _base;
 
   Future<void> init() async {
     if (_ready) return;
-    _ready = true;
-    final p = AudioPlayer();
-    _p = p;
-    p.onPlayerStateChanged.listen((s) {
-      _state = s;
-      playing = s == PlayerState.playing;
-      notifyListeners();
-    });
-    p.onPositionChanged.listen((d) {
-      pos = d;
-      notifyListeners();
-    });
-    p.onDurationChanged.listen((d) {
-      dur = d;
-      notifyListeners();
-    });
-    p.onPlayerComplete.listen((_) => _onComplete());
+    String? base;
     try {
-      final sp = await SharedPreferences.getInstance();
-      final s = sp.getString('music_v1');
-      if (s != null) {
-        final m = jsonDecode(s) as Map<String, dynamic>;
-        for (final e in (m['t'] as List)) {
-          final t = Map<String, dynamic>.from(e as Map);
-          final path = t['p'] as String;
-          if (File(path).existsSync()) tracks.add(Track(path, t['n'] as String));
+      final d = await getApplicationDocumentsDirectory().timeout(const Duration(seconds: 3));
+      base = d.path;
+    } catch (_) {}
+    if (base == null) return;
+    _base = base;
+    _ready = true;
+    try {
+      final p = AudioPlayer();
+      _p = p;
+      p.onPlayerStateChanged.listen((s) {
+        _state = s;
+        playing = s == PlayerState.playing;
+        notifyListeners();
+      });
+      p.onPositionChanged.listen((d) {
+        pos = d;
+        notifyListeners();
+      });
+      p.onDurationChanged.listen((d) {
+        dur = d;
+        notifyListeners();
+      });
+      p.onPlayerComplete.listen((_) => _onComplete());
+    } catch (_) {}
+    for (final n in const ['music_v3.json', 'music_v3.bak']) {
+      try {
+        final f = File('$base/$n');
+        if (!f.existsSync()) continue;
+        final m = jsonDecode(f.readAsStringSync());
+        if (m is! Map) continue;
+        final list = m['t'];
+        if (list is List) {
+          for (final e in list) {
+            if (e is Map) {
+              final path = e['p'];
+              final name = e['n'];
+              if (path is String && name is String && File(path).existsSync()) {
+                tracks.add(Track(path, name));
+              }
+            }
+          }
         }
         final l = m['l'];
         if (l is num) loop = l.toInt().clamp(0, 2).toInt();
-      }
-    } catch (_) {}
+        break;
+      } catch (_) {}
+    }
     notifyListeners();
   }
 
-  Future<void> _save() async {
+  void _save() {
+    final base = _base;
+    if (base == null) return;
     try {
-      final sp = await SharedPreferences.getInstance();
-      await sp.setString(
-        'music_v1',
-        jsonEncode({
-          't': [
-            for (final t in tracks) {'p': t.path, 'n': t.name}
-          ],
-          'l': loop,
-        }),
-      );
+      final s = jsonEncode({
+        't': [
+          for (final t in tracks) {'p': t.path, 'n': t.name}
+        ],
+        'l': loop,
+      });
+      final tmp = File('$base/music_v3.tmp');
+      tmp.writeAsStringSync(s, flush: true);
+      tmp.renameSync('$base/music_v3.json');
+      File('$base/music_v3.bak').writeAsStringSync(s, flush: true);
     } catch (_) {}
   }
 
@@ -164,7 +184,7 @@ class MusicService extends ChangeNotifier {
     } else if (i < index) {
       index--;
     }
-    await _save();
+    _save();
     notifyListeners();
   }
 
@@ -177,11 +197,14 @@ class MusicService extends ChangeNotifier {
     playing = false;
     pos = Duration.zero;
     dur = Duration.zero;
-    await _save();
+    _save();
     notifyListeners();
   }
+
   Future<int> addFiles() async {
     await init();
+    final base = _base;
+    if (base == null) return 0;
     FilePickerResult? r;
     app.beginExternal();
     try {
@@ -194,8 +217,7 @@ class MusicService extends ChangeNotifier {
       return 0;
     }
     if (r == null) return 0;
-    final base = await getApplicationDocumentsDirectory();
-    final dir = Directory('${base.path}/music');
+    final dir = Directory('$base/music');
     if (!dir.existsSync()) dir.createSync(recursive: true);
     var n = 0;
     for (final f in r.files) {
@@ -210,8 +232,12 @@ class MusicService extends ChangeNotifier {
         n++;
       } catch (_) {}
     }
-    await _save();
+    _save();
     notifyListeners();
+    // 清掉系统选文件时留在缓存里的副本
+    try {
+      await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {}
     return n;
   }
 }
@@ -272,15 +298,13 @@ class _MusicPageState extends State<MusicPage> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
-                    if (m.error)
-                      Text(tr('没办法播放该文件ᯠ˶｡  ̫`｡˶ᯄ੭'), style: TextStyle(color: cs.error)),
+                    if (m.error) Text(tr('无法播放该文件'), style: TextStyle(color: cs.error)),
                     Slider(
                       value: v,
                       min: 0,
                       max: maxMs,
-                      onChanged: cur == null
-                          ? null
-                          : (x) => m.seek(Duration(milliseconds: x.toInt())),
+                      onChanged:
+                          cur == null ? null : (x) => m.seek(Duration(milliseconds: x.toInt())),
                     ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -351,9 +375,7 @@ class _MusicPageState extends State<MusicPage> {
                                 child: Row(
                                   children: [
                                     Icon(
-                                        sel && m.playing
-                                            ? Icons.graphic_eq
-                                            : Icons.music_note,
+                                        sel && m.playing ? Icons.graphic_eq : Icons.music_note,
                                         color: ink),
                                     const SizedBox(width: 12),
                                     Expanded(
