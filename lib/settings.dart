@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'festival.dart';
+import 'items.dart';
 
 class Preset {
   final String id, name, hidText;
@@ -145,11 +146,15 @@ const Preset kDivine = Preset(
   tiles: [Color(0xFFD32F2F), Color(0xFFFFB300), Color(0xFFB71C1C), Color(0xFFFFCA28)],
 );
 
-double _d(dynamic v, double def) => v is num ? v.toDouble() : def;
+double _d(dynamic v, double def) => (v is num && v.isFinite) ? v.toDouble() : def;
 int _i(dynamic v, int def, int hi) {
   final x = v is num ? v.toInt() : def;
   return x < 0 ? 0 : (x > hi ? hi : x);
 }
+
+String _s(dynamic v, String def) => v is String ? v : def;
+bool _b(dynamic v, bool def) => v is bool ? v : def;
+int _tsOf(Map<String, dynamic> m) => m['ts'] is num ? (m['ts'] as num).toInt() : 0;
 
 /// 轻量校验码（防手滑改数据，不是真正的加密）
 String signText(String s) {
@@ -190,18 +195,18 @@ class ImgLayer {
 
   Map<String, dynamic> toJson() => {
         'path': path,
-        'scale': scale,
-        'dx': dx,
-        'dy': dy,
-        'rot': rot,
-        'sx': skewX,
-        'sy': skewY,
-        'op': opacity,
-        'blur': blur,
+        'scale': _d(scale, 1),
+        'dx': _d(dx, 0),
+        'dy': _d(dy, 0),
+        'rot': _d(rot, 0),
+        'sx': _d(skewX, 0),
+        'sy': _d(skewY, 0),
+        'op': _d(opacity, 1),
+        'blur': _d(blur, 0),
       };
 
   static ImgLayer fromJson(Map<String, dynamic> j) => ImgLayer(
-        path: j['path'] as String?,
+        path: j['path'] is String ? j['path'] as String : null,
         scale: _d(j['scale'], 1),
         dx: _d(j['dx'], 0),
         dy: _d(j['dy'], 0),
@@ -223,12 +228,16 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   int animLevel = 2; // 0 关闭 1 高效 2 舒适 3 液态Q弹
   bool glass = false;
   bool decor = true;
-  final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
-  final Set<String> unlocked = <String>{};
-  bool tampered = false;
   bool festOn = true;
   String festPreview = '';
   String prankOff = '';
+  bool dev = false;
+  bool tampered = false;
+  final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
+  final Set<String> unlocked = <String>{};
+  final Set<String> owned = <String>{};
+  final List<String> eqBadges = <String>[];
+  String? eqCorner;
   final List<String> avatars = <String>[];
   final Map<String, int> custom = {};
   final Map<String, ImgLayer> layers = {
@@ -250,6 +259,9 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _timer;
   bool _observing = false;
   bool _pending = false;
+  Future<void> _chain = Future<void>.value();
+  DateTime? _pausedAt;
+  DateTime? _extAt;
 
   List<Preset> get presets =>
       unlocked.contains('divine') ? <Preset>[...kPresets, kDivine] : kPresets;
@@ -262,9 +274,10 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     return kPresets[1];
   }
 
-  bool get divine => presetId == 'divine' && unlocked.contains('divine');
-
   bool get hasDivine => unlocked.contains('divine');
+  bool get divine => presetId == 'divine' && hasDivine;
+  bool owns(String id) => owned.contains(id);
+
   bool get isDark =>
       divine || themeMode == 2 || (themeMode == 0 && sysB == Brightness.dark);
 
@@ -287,6 +300,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
 
   double get cardR => const [26.0, 6.0, 14.0, 12.0][uiStyle];
   double get btnR => const [30.0, 6.0, 12.0, 12.0][uiStyle];
+
   Color? festBg(bool top) {
     if (divine) return null;
     final f = activeFestival();
@@ -295,53 +309,88 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     return isDark ? Color.lerp(c, Colors.black, 0.6) : c;
   }
 
+  // ───────────── 存取 ─────────────
+
+  Future<File> _stateFile() async {
+    final d = await getApplicationDocumentsDirectory();
+    return File('${d.path}/state_v2.json');
+  }
+
   Future<void> load() async {
-    _sp = await SharedPreferences.getInstance();
+    final sp = await SharedPreferences.getInstance();
+    _sp = sp;
     if (!_observing) {
       _observing = true;
       WidgetsBinding.instance.addObserver(this);
     }
-    final s = _sp!.getString('app_v1');
+    Map<String, dynamic>? a, b;
+    final s = sp.getString('app_v1');
     if (s != null) {
       try {
-        _read(jsonDecode(s) as Map<String, dynamic>);
+        final x = jsonDecode(s);
+        if (x is Map) a = Map<String, dynamic>.from(x);
       } catch (_) {}
     }
+    try {
+      final f = await _stateFile();
+      if (f.existsSync()) {
+        final x = jsonDecode(await f.readAsString());
+        if (x is Map) b = Map<String, dynamic>.from(x);
+      }
+    } catch (_) {}
+    Map<String, dynamic>? pick = a ?? b;
+    if (a != null && b != null) pick = _tsOf(b) > _tsOf(a) ? b : a;
+    if (pick != null) {
+      try {
+        _read(pick);
+        dev = pick['dev'] == true;
+      } catch (_) {}
+    }
+    if (dev) grantAll();
     launches++;
-    _write();
+    flush();
+  }
+
+  void beginExternal() {
+    _extAt = DateTime.now();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) flush();
+    if (state == AppLifecycleState.resumed) {
+      final p = _pausedAt;
+      _pausedAt = null;
+      final e = _extAt;
+      if (e != null) {
+        _extAt = null;
+        if (DateTime.now().difference(e).inMinutes < 10) return;
+      }
+      if (p != null && DateTime.now().difference(p).inSeconds >= 10) {
+        launches++;
+        flush();
+        notifyListeners();
+      }
+    } else {
+      _pausedAt ??= DateTime.now();
+      flush();
+    }
   }
 
   void _read(Map<String, dynamic> j) {
-    presetId = (j['preset'] ?? presetId) as String;
+    presetId = _s(j['preset'], presetId);
     themeMode = _i(j['mode'], themeMode, 2);
     uiStyle = _i(j['style'], uiStyle, 3);
     toggleShape = _i(j['shape'], toggleShape, 1);
     lang = _i(j['lang'], lang, 3);
     fxMode = _i(j['fx'], fxMode, 2);
     animLevel = _i(j['anim'], animLevel, 3);
-    glass = j['glass'] == true;
-    decor = j['decor'] != false;
-    festOn = j['fest'] != false;
-    prankOff = (j['prankOff'] ?? '') as String;
-    final av = j['avatars'];
-    if (av is List) {
-      avatars.clear();
-      for (final e in av) {
-        if (e is String) avatars.add(e);
-      }
-    }
+    glass = _b(j['glass'], false);
+    decor = _b(j['decor'], true);
+    festOn = _b(j['fest'], true);
+    prankOff = _s(j['prankOff'], '');
     unlocked.clear();
     final u = j['unlocked'];
-    if (u is List) {
-      for (final e in u) {
-        unlocked.add(e.toString());
-      }
-    }
+    if (u is List) unlocked.addAll(u.whereType<String>());
     custom.clear();
     final cm = j['custom'];
     if (cm is Map) {
@@ -357,12 +406,36 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         }
       });
     }
-    name = (j['name'] ?? name) as String;
-    uid = (j['uid'] ?? uid) as String;
-    bio = (j['bio'] ?? bio) as String;
-    birthday = (j['birthday'] ?? birthday) as String;
-    avatar = j['avatar'] as String?;
+    name = _s(j['name'], name);
+    uid = _s(j['uid'], uid);
+    bio = _s(j['bio'], bio);
+    birthday = _s(j['birthday'], birthday);
+    avatar = j['avatar'] is String ? j['avatar'] as String : null;
     borderColor = j['border'] is num ? (j['border'] as num).toInt() : borderColor;
+    avatars.clear();
+    final av = j['avatars'];
+    if (av is List) avatars.addAll(av.whereType<String>());
+
+    final ow = j['owned'];
+    if (ow is List) {
+      owned
+        ..clear()
+        ..addAll(ow.whereType<String>());
+      eqBadges.clear();
+      final eb = j['eqb'];
+      if (eb is List) eqBadges.addAll(eb.whereType<String>());
+      eqCorner = j['eqc'] is String ? j['eqc'] as String : null;
+    } else if (unlocked.contains('divine')) {
+      owned
+        ..clear()
+        ..addAll(const ['badge_divine', 'corner_star', 'avatar_star']);
+      eqBadges
+        ..clear()
+        ..add('badge_divine');
+      eqCorner = 'corner_star';
+    }
+    _cleanItems();
+
     final w = _i(j['wins'], 0, 99999999);
     final l = _i(j['losses'], 0, 99999999);
     final la = _i(j['launches'], 0, 99999999);
@@ -379,7 +452,14 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _cleanItems() {
+    final seen = <String>{};
+    eqBadges.removeWhere((e) => !owned.contains(e) || !seen.add(e));
+    if (eqCorner != null && !owned.contains(eqCorner)) eqCorner = null;
+  }
+
   Map<String, dynamic> _json() => {
+        'ts': DateTime.now().millisecondsSinceEpoch,
         'preset': presetId,
         'mode': themeMode,
         'style': uiStyle,
@@ -391,8 +471,11 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'decor': decor,
         'fest': festOn,
         'prankOff': prankOff,
-        'avatars': avatars,
+        'dev': dev,
         'unlocked': unlocked.toList(),
+        'owned': owned.toList(),
+        'eqb': eqBadges,
+        'eqc': eqCorner,
         'custom': custom,
         'layers': {for (final e in layers.entries) e.key: e.value.toJson()},
         'name': name,
@@ -400,6 +483,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'bio': bio,
         'birthday': birthday,
         'avatar': avatar,
+        'avatars': avatars,
         'border': borderColor,
         'wins': wins,
         'losses': losses,
@@ -408,12 +492,25 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
       };
 
   void _write() {
-    _sp?.setString('app_v1', jsonEncode(_json()));
+    try {
+      final s = jsonEncode(_json());
+      _sp?.setString('app_v1', s);
+      _chain = _chain.then((_) => _writeFile(s));
+    } catch (_) {}
+  }
+
+  Future<void> _writeFile(String s) async {
+    try {
+      final f = await _stateFile();
+      final tmp = File('${f.path}.tmp');
+      await tmp.writeAsString(s, flush: true);
+      await tmp.rename(f.path);
+    } catch (_) {}
   }
 
   void _later() {
     _timer?.cancel();
-    _timer = Timer(const Duration(milliseconds: 400), _write);
+    _timer = Timer(const Duration(milliseconds: 300), _write);
   }
 
   /// 立刻写入（切后台、记录战绩时用）
@@ -449,6 +546,72 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     _later();
   }
 
+  // ───────────── 道具 / 装扮 ─────────────
+
+  void grantAll() {
+    for (final it in kItems) {
+      owned.add(it.id);
+    }
+    unlocked.add('divine');
+  }
+
+  void unlockDivine() {
+    change(() {
+      unlocked.add('divine');
+      for (final id in const ['badge_divine', 'corner_star', 'avatar_star']) {
+        owned.add(id);
+      }
+      if (!eqBadges.contains('badge_divine')) eqBadges.add('badge_divine');
+      eqCorner ??= 'corner_star';
+    });
+    avatarRev.value++;
+    flush();
+  }
+
+  void toggleBadge(String id) {
+    touchAvatar(() {
+      if (eqBadges.contains(id)) {
+        eqBadges.remove(id);
+      } else if (owned.contains(id)) {
+        eqBadges.add(id);
+      }
+    });
+  }
+
+  void setCorner(String id) {
+    touchAvatar(() {
+      if (eqCorner == id) {
+        eqCorner = null;
+      } else if (owned.contains(id)) {
+        eqCorner = id;
+      }
+    });
+  }
+
+  void enterDev() {
+    final first = !owned.contains('badge_ts');
+    change(() {
+      dev = true;
+      grantAll();
+      if (first) {
+        for (final id in const ['badge_ts', 'badge_dev', 'badge_admin']) {
+          if (!eqBadges.contains(id)) eqBadges.add(id);
+        }
+        eqCorner = 'corner_ts';
+      }
+    });
+    avatarRev.value++;
+    flush();
+  }
+
+  void exitDev() {
+    change(() {
+      dev = false;
+      festPreview = '';
+    });
+    flush();
+  }
+
   /// 联机对战结束后记录胜负（只能由程序调用）
   void recordResult(bool win) {
     if (win) {
@@ -459,37 +622,24 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     flush();
   }
 
-  String exportText() {
-    final m = _json();
-    m.remove('avatar');
-    m.remove('layers');
-    m.remove('avatars');
-    final body = base64Encode(utf8.encode(jsonEncode(m)));
-    return 'XQ1:$body.${signText(body)}';
+  // ───────────── 备份 ─────────────
+
+  Map<String, dynamic> exportMap() {
+    final m = jsonDecode(jsonEncode(_json())) as Map<String, dynamic>;
+    m.remove('dev');
+    m.remove('ts');
+    return m;
   }
 
-  /// 成功返回 null；'sig' 校验失败；'bad' 格式不对
-  String? importText(String raw) {
-    final t = raw.trim();
-    if (!t.startsWith('XQ1:')) return 'bad';
-    final rest = t.substring(4);
-    final dot = rest.lastIndexOf('.');
-    if (dot <= 0) return 'bad';
-    final body = rest.substring(0, dot);
-    if (signText(body) != rest.substring(dot + 1)) return 'sig';
-    try {
-      final m = jsonDecode(utf8.decode(base64Decode(body))) as Map<String, dynamic>;
-      final keepAvatar = avatar;
-      _read(m);
-      avatar = keepAvatar;
-      tampered = false;
-      avatarRev.value++;
-      notifyListeners();
-      flush();
-      return null;
-    } catch (_) {
-      return 'bad';
-    }
+  void importMap(Map<String, dynamic> m) {
+    final keepDev = dev;
+    _read(m);
+    dev = keepDev;
+    tampered = false;
+    if (dev) grantAll();
+    avatarRev.value++;
+    notifyListeners();
+    flush();
   }
 }
 
@@ -497,6 +647,7 @@ final AppSettings app = AppSettings();
 
 Future<String?> pickImage() async {
   try {
+    app.beginExternal();
     final x = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (x == null) return null;
     final dir = await getApplicationDocumentsDirectory();
