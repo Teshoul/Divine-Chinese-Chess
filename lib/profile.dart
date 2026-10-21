@@ -457,7 +457,14 @@ class _ProfileContentState extends State<ProfileContent> {
           decoration: styled(cs.surfaceContainerHighest, r: app.cardR),
           child: Column(
             children: [
-              Text('$v', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('$v',
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                ),
+              ),
               const SizedBox(height: 2),
               Text(label, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
             ],
