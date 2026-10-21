@@ -67,7 +67,7 @@ class _ExtrasSectionsState extends State<ExtrasSections> {
   Future<void> _export() async {
     final r = await importBackup(context);
     if (!mounted) return;
-    if (r == 'ok') _toast('备份已保存');
+    if (r == 'ok') _toast('备份已生成，请在弹出的分享面板里选择保存位置');
     if (r.startsWith('fail')) _toast('导出失败：${r.length > 5 ? r.substring(5) : ''}');
   }
 
