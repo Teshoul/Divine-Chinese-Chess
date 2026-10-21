@@ -275,6 +275,7 @@ const Map<String, List<String>> _t = {
   '正在打包备份，请稍候…': ['Packing backup, please wait…', 'バックアップを作成中…', 'Создаётся резервная копия…'],
   '正在导入，请稍候…': ['Importing, please wait…', '読み込み中…', 'Импорт, подождите…'],
   '存储状态': ['Storage status', '保存状態', 'Состояние хранилища'],
+  '备份已生成，请在弹出的分享面板里选择保存位置': ['Backup ready. Choose where to save it in the share sheet.', 'バックアップを作成しました。共有メニューで保存先を選んでください', 'Копия готова. Выберите место сохранения в меню «Поделиться»'],
 };
 
 String tr(String zh) {
