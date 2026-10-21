@@ -153,6 +153,8 @@ int _i(dynamic v, int def, int hi) {
 
 String _s(dynamic v, String def) => v is String ? v : def;
 bool _b(dynamic v, bool def) => v is bool ? v : def;
+const int kStatMax = 999999999999;
+int clampStat(int v) => v < 0 ? 0 : (v > kStatMax ? kStatMax : v);
 int _tsOf(Map<String, dynamic> m) => m['ts'] is num ? (m['ts'] as num).toInt() : 0;
 
 /// 轻量校验码（防手滑改数据，不是真正的加密）
@@ -461,9 +463,9 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     }
     _cleanItems();
 
-    final w = _i(j['wins'], 0, 99999999);
-    final l = _i(j['losses'], 0, 99999999);
-    final la = _i(j['launches'], 0, 99999999);
+    final w = _i(j['wins'], 0, kStatMax);
+    final l = _i(j['losses'], 0, kStatMax);
+    final la = _i(j['launches'], 0, kStatMax);
     final sg = j['ssig'];
     if (sg is String && sg != signText('$w|$l|$la')) {
       tampered = true;
