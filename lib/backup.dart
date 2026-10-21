@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'music.dart';
 import 'settings.dart';
 import 'strings.dart';
@@ -108,7 +108,7 @@ void _hideBusy(BuildContext context) {
   if (context.mounted) Navigator.of(context).pop();
 }
 
-// ───────── 导出 ─────────
+// ───────── 导出（打包后调出系统分享面板）─────────
 
 /// 返回 'ok' | 'cancel' | 'fail:原因'
 Future<String> exportBackup(BuildContext context) async {
@@ -121,7 +121,7 @@ Future<String> exportBackup(BuildContext context) async {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(tr('给备份压缩包起个名字（可随时再改）')),
+          Text(tr('给备份压缩包起个名字，别找不到了ᯠ˶｡  ̫`｡˶ᯄ੭（可随时再改）')),
           const SizedBox(height: 10),
           TextField(
             controller: ctl,
@@ -143,8 +143,7 @@ Future<String> exportBackup(BuildContext context) async {
   if (safe.isEmpty) safe = _defaultName();
 
   _showBusy(context, tr('正在打包备份，请稍候…'));
-  String? tmp;
-  Uint8List? bytes;
+  var out = '';
   try {
     await MusicService.I.init();
     final snap = app.exportMap();
@@ -188,10 +187,21 @@ Future<String> exportBackup(BuildContext context) async {
 
     final body = jsonEncode(snap);
     final sig = signText(body);
+
+    // 每次导出前先清掉上一次留下的压缩包，缓存不会越攒越多
     final cache = await getTemporaryDirectory();
-    final out = '${cache.path}/backup_${DateTime.now().millisecondsSinceEpoch}.zip';
-    tmp = await _zipInIsolate(out, pairs, body, sig);
-    bytes = await File(tmp).readAsBytes();
+    final dir = Directory('${cache.path}/exports');
+    if (dir.existsSync()) {
+      for (final f in dir.listSync()) {
+        try {
+          f.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    } else {
+      dir.createSync(recursive: true);
+    }
+    out = '${dir.path}/$safe.zip';
+    await _zipInIsolate(out, pairs, body, sig);
   } catch (e) {
     _hideBusy(context);
     return 'fail:$e';
@@ -200,23 +210,13 @@ Future<String> exportBackup(BuildContext context) async {
 
   try {
     app.beginExternal();
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: tr('保存备份'),
-      fileName: '$safe.zip',
-      bytes: bytes,
-      type: FileType.custom,
-      allowedExtensions: ['zip'],
+    await Share.shareXFiles(
+      [XFile(out, mimeType: 'application/zip')],
+      subject: '$safe.zip',
     );
-    return path == null ? 'cancel' : 'ok';
+    return 'ok';
   } catch (e) {
     return 'fail:$e';
-  } finally {
-    try {
-      if (tmp != null) File(tmp).deleteSync();
-    } catch (_) {}
-    try {
-      await FilePicker.platform.clearTemporaryFiles();
-    } catch (_) {}
   }
 }
 
