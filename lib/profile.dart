@@ -284,7 +284,8 @@ class _ProfileContentState extends State<ProfileContent> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(trf('修改{x}', {'x': title})),
-        content: TextField(controller: c, keyboardType: TextInputType.number, autofocus: true),
+        content: TextField(
+            controller: c, keyboardType: TextInputType.number, autofocus: true, maxLength: 12),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr('取消'))),
           FilledButton(
@@ -295,7 +296,7 @@ class _ProfileContentState extends State<ProfileContent> {
       ),
     );
     if (v != null) {
-      setState(() => set(v < 0 ? 0 : v));
+      setState(() => set(clampStat(v)));
       app.flush();
     }
   }
