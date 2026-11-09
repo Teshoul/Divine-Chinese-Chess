@@ -474,7 +474,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         child: _roundBtn(
                           Icons.settings,
                           () {
-                            if (prank.gate(context, 'settings', '设置坏了，再点一次试试')) return;
+                            if (prank.gate(context, 'settings', '请检查网络！')) return;
                             Navigator.push(context, revealRoute(const SettingsPage()));
                           },
                           0.0,
