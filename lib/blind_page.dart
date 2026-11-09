@@ -8,18 +8,23 @@ import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
 import 'peer.dart';
+import 'ai_glue.dart';
+import 'ai_ui.dart';
+import 'enter_fx.dart';
 
 class BlindPage extends StatefulWidget {
   final BlindConfig cfg;
   final int seed;
   final String title;
   final MatchInfo? match;
+  final AiPlan? ai;
   const BlindPage({
     super.key,
     required this.cfg,
     required this.seed,
     this.title = '盲棋',
     this.match,
+    this.ai,
   });
 
   @override
@@ -49,6 +54,8 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   bool lastReveal = false;
   bool devFree = false;
   bool devUsed = false;
+  bool _aiThinking = false;
+  int _aiGen = 0;
   BPiece? lastDead;
   late final AnimationController _ac;
   late final AnimationController _pulse;
@@ -57,6 +64,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   bool get online => m != null;
   Side? get mySide => m == null ? null : (m!.first ? Side.red : Side.black);
   String _name(Side s) => tr(s == Side.red ? '红方' : '黑方');
+  bool get _aiOn => widget.ai != null && !online;
 
   @override
   void initState() {
@@ -67,6 +75,10 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
       ..value = 1;
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
       ..value = 1;
+    if (_aiOn) {
+      flip = widget.ai!.human == Side.black;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAi());
+    }
     if (online) {
       flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -77,6 +89,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _aiGen++;
     _ac.dispose();
     _pulse.dispose();
     if (online) {
@@ -84,6 +97,54 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
       m!.link.close();
     }
     super.dispose();
+  }
+
+  Future<void> _maybeAi() async {
+    if (!mounted || !_aiOn || game.winner != null || _aiThinking) return;
+    if (game.turn != widget.ai!.ai) return;
+    final gen = ++_aiGen;
+    setState(() => _aiThinking = true);
+    Move? mv;
+    try {
+      mv = await aiBlindMove(game, widget.ai!.level);
+    } catch (_) {
+      mv = null;
+    }
+    if (!mounted || gen != _aiGen) return;
+    final Move? pick = (mv != null && _legalForAi(mv)) ? mv : _randomAiMove();
+    setState(() {
+      _aiThinking = false;
+      if (pick != null) _apply(pick);
+    });
+  }
+
+  bool _legalForAi(Move m) {
+    final p = game.b[m.fr][m.fc];
+    if (p == null || p.owner != widget.ai!.ai) return false;
+    return game.movesFor(m.fr, m.fc).any((x) => x.tr == m.tr && x.tc == m.tc);
+  }
+
+  Move? _randomAiMove() {
+    final all = <Move>[];
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = game.b[r][c];
+        if (p != null && p.owner == widget.ai!.ai) all.addAll(game.movesFor(r, c));
+      }
+    }
+    if (all.isEmpty) return null;
+    return all[Random().nextInt(all.length)];
+  }
+
+  void _undo() {
+    if (_aiThinking) return;
+    setState(() {
+      game.undo();
+      if (_aiOn && game.canUndo && game.turn != widget.ai!.human) game.undo();
+      clearSel();
+      _resetFlags();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAi());
   }
 
   void clearSel() {
@@ -142,6 +203,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
       return;
     }
     if (online && game.turn != mySide) return;
+    if (_aiOn && (_aiThinking || game.turn != widget.ai!.human)) return;
     final p = game.b[r][c];
     if (sr != null && hints.any((x) => x.tr == r && x.tc == c)) {
       final mv = Move(sr!, sc!, r, c);
@@ -153,6 +215,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
           clearSel();
         }
       });
+      _maybeAi();
       return;
     }
     if (p != null && p.owner == game.turn) {
@@ -207,12 +270,15 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
     });
   }
   void restart() {
+    _aiGen++;
+    _aiThinking = false;
     final seed = Random().nextInt(1 << 30);
     setState(() {
       game = BlindGame(cfg, seed);
       clearSel();
       _resetFlags();
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAi());
     if (online) {
       m!.link.send({'type': 'start', 'cfg': cfg.toJson(), 'seed': seed});
     }
@@ -228,6 +294,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final Animation<double> enter = ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation;
     _syncRecord();
     final msg = status;
     final base = tr(widget.title);
@@ -237,32 +304,18 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
         const ImageSlot(slot: 'game'),
         if (online) ...onlineBadges(context, m!.link),
         Scaffold(
-          appBar: AppBar(title: Text(online ? '$base · ${tr('联机')}' : base)),
+          appBar: AppBar(
+              title: Text(online
+                  ? '$base · ${tr('联机')}'
+                  : (_aiOn ? '$base · ${tx('对战 AI')} ${aiLevelName(widget.ai!.level)}' : base))),
           body: SafeArea(
             child: Column(
               children: [
-                SizedBox(
+                Stagger(anim: enter, begin: 0.30, end: 0.62, from: const Offset(0, -0.5), child: SizedBox(
                   height: 44,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      if (app.dev)
-                      LitToggle(
-                        icon: Icons.build,
-                        label: tr('自由行棋'),
-                        value: devFree,
-                        onChanged: (v) {
-                          setState(() {
-                            devFree = v;
-                            clearSel();
-                          });
-                          if (v) {
-                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                                content: Text(tr(
-                                    '自由行棋：点一个棋子，再点目标格。空格=移动，对方棋子=吃掉，己方棋子=调换位置；再点一次已选棋子可取消。'))));
-                          }
-                        },
-                      ),
                       sideTag(context, Side.black,
                           active: game.winner == null && game.turn == Side.black,
                           mine: online && mySide == Side.black),
@@ -272,28 +325,32 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                           mine: online && mySide == Side.red),
                     ],
                   ),
-                ),
-                SizedBox(
+                )),
+                Stagger(anim: enter, begin: 0.36, end: 0.68, from: const Offset(0, -0.4), child: SizedBox(
                   height: 40,
                   child: Center(
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 250),
                       transitionBuilder: (c, a) =>
                           FadeTransition(opacity: a, child: ScaleTransition(scale: a, child: c)),
-                      child: Text(
-                        msg,
-                        key: ValueKey(msg),
-                        style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700,
-                          color: game.winner != null ? cs.primary : cs.onSurface,
-                        ),
-                      ),
+                      child: _aiThinking
+                          ? ThinkingLabel(
+                              key: const ValueKey('thinking'),
+                              color: widget.ai!.level == 4 ? const Color(0xFFFF3D3D) : cs.primary)
+                          : Text(
+                              msg,
+                              key: ValueKey(msg),
+                              style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w700,
+                                color: game.winner != null ? cs.primary : cs.onSurface,
+                              ),
+                            ),
                     ),
                   ),
-                ),
+                )),
                 Expanded(
-                  child: Center(
+                  child: Stagger(anim: enter, begin: 0.38, end: 0.92, from: const Offset(0, 0.04), child: Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       child: AspectRatio(
@@ -322,21 +379,32 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                         }),
                       ),
                     ),
-                  ),
+                  )),
                 ),
-                ActionBar(
+                Stagger(anim: enter, begin: 0.55, end: 1.0, from: const Offset(0, 0.9), child: ActionBar(
                   children: [
+                    if (app.dev)
+                      LitToggle(
+                        icon: Icons.build,
+                        label: tr('自由行棋'),
+                        value: devFree,
+                        onChanged: (v) {
+                          setState(() {
+                            devFree = v;
+                            clearSel();
+                          });
+                          if (v) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(tr(
+                                    '自由行棋：点一个棋子，再点目标格。空格=移动，对方棋子=吃掉，己方棋子=调换位置；再点一次已选棋子可取消。'))));
+                          }
+                        },
+                      ),
                     if (!online)
                       LitButton(
                         icon: Icons.undo,
                         label: tr('悔棋'),
-                        onTap: game.canUndo
-                            ? () => setState(() {
-                                  game.undo();
-                                  clearSel();
-                                  _resetFlags();
-                                })
-                            : null,
+                        onTap: (game.canUndo && !_aiThinking) ? _undo : null,
                       ),
                     LitButton(
                         icon: Icons.flip,
@@ -345,7 +413,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
                     if (!online || m!.isHost)
                       LitButton(icon: Icons.refresh, label: tr('重开'), onTap: restart),
                   ],
-                ),
+                )),
               ],
             ),
           ),
