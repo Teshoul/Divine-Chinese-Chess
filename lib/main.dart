@@ -15,6 +15,8 @@ import 'settings.dart';
 import 'settings_page.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'ai_glue.dart';
+import 'enter_fx.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -229,9 +231,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       case 2:
         page = BlindSetupPage(
           buttonText: tr('开始游戏'),
+          showAi: true,
           onConfirm: (ctx, cfg) {
             Navigator.pushReplacement(
-                ctx, fadeRoute(BlindPage(cfg: cfg, seed: Random().nextInt(1 << 30))));
+                ctx, gameEnterRoute(BlindPage(cfg: cfg, seed: Random().nextInt(1 << 30))));
+          },
+          onStart: (ctx, cfg, AiPlan? plan) {
+            Navigator.pushReplacement(
+                ctx,
+                gameEnterRoute(
+                    BlindPage(cfg: cfg, seed: Random().nextInt(1 << 30), ai: plan)));
           },
         );
         break;
