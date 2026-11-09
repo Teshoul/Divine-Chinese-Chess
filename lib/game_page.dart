@@ -7,18 +7,23 @@ import 'peer.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'ai_glue.dart';
+import 'ai_ui.dart';
+import 'enter_fx.dart';
 
 class GamePage extends StatefulWidget {
   final bool free;
   final MatchInfo? match;
   final bool mate;
   final bool strictInit;
+  final AiPlan? ai;
   const GamePage({
     super.key,
     required this.free,
     this.match,
     this.mate = true,
     this.strictInit = false,
+    this.ai,
   });
 
   @override
@@ -36,6 +41,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   bool autoMate = true;
   bool devFree = false;
   bool devUsed = false;
+  bool _aiThinking = false;
+  int _aiGen = 0;
   bool lost = false;
   String? over;
   bool _recorded = false;
@@ -46,6 +53,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   bool get online => m != null;
   Side? get mySide => m == null ? null : (m!.first ? Side.red : Side.black);
   String _name(Side s) => tr(s == Side.red ? '红方' : '黑方');
+  bool get _aiOn => widget.ai != null && !online;
 
   void _syncRecord() {
     if (!online) return;
@@ -69,6 +77,10 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       ..value = 1;
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
       ..value = 1;
+    if (_aiOn) {
+      flip = widget.ai!.human == Side.black;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAi());
+    }
     if (online) {
       flip = mySide == Side.black;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -79,6 +91,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _aiGen++;
     _ac.dispose();
     _pulse.dispose();
     if (online) {
@@ -86,6 +99,46 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       m!.link.close();
     }
     super.dispose();
+  }
+
+  Future<void> _maybeAi() async {
+    if (!mounted || !_aiOn || over != null || _aiThinking) return;
+    if (game.turn != widget.ai!.ai) return;
+    final gen = ++_aiGen;
+    setState(() => _aiThinking = true);
+    Move? mv;
+    try {
+      mv = await aiStandardMove(game, widget.ai!.level);
+    } catch (_) {
+      mv = null;
+    }
+    if (!mounted || gen != _aiGen) return;
+    final Move? pick = (mv != null && _legalForAi(mv)) ? mv : _randomAiMove();
+    setState(() {
+      _aiThinking = false;
+      if (pick != null) {
+        final cap = game.b[pick.tr][pick.tc] != null;
+        if (game.play(pick, strict: false)) _afterMove(pick, cap);
+      }
+    });
+  }
+
+  bool _legalForAi(Move m) {
+    final p = game.b[m.fr][m.fc];
+    if (p == null || p.side != widget.ai!.ai) return false;
+    return game.legalMoves(m.fr, m.fc).any((x) => x.tr == m.tr && x.tc == m.tc);
+  }
+
+  Move? _randomAiMove() {
+    final all = <Move>[];
+    for (var r = 0; r < 10; r++) {
+      for (var c = 0; c < 9; c++) {
+        final p = game.b[r][c];
+        if (p != null && p.side == widget.ai!.ai) all.addAll(game.legalMoves(r, c));
+      }
+    }
+    if (all.isEmpty) return null;
+    return all[Random().nextInt(all.length)];
   }
 
   void clearSel() {
@@ -104,6 +157,8 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   void _reset() {
+    _aiGen++;
+    _aiThinking = false;
     game.reset();
     last = null;
     lastCap = false;
@@ -112,6 +167,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
     clearSel();
     _ac.value = 1;
     _pulse.value = 1;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAi());
   }
 
   void _onNet(Map<String, dynamic> msg) {
@@ -192,6 +248,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
         m!.link.send({'type': 'dev', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
       }
       setState(() => _afterMove(mv, cap));
+      _maybeAi();
     } else {
       setState(clearSel);
     }
@@ -204,6 +261,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       return;
     }
     if (online && game.turn != mySide) return;
+    if (_aiOn && (_aiThinking || game.turn != widget.ai!.human)) return;
     final p = game.b[r][c];
     if (sr != null) {
       final from = game.b[sr!][sc!];
@@ -218,6 +276,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           m!.link.send({'type': 'move', 'fr': mv.fr, 'fc': mv.fc, 'tr': mv.tr, 'tc': mv.tc});
         }
         setState(() => _afterMove(mv, cap));
+      _maybeAi();
       } else {
         setState(clearSel);
       }
@@ -227,8 +286,10 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
   }
 
   void undo() {
+    if (_aiThinking) return;
     setState(() {
       game.undo();
+      if (_aiOn && game.history.isNotEmpty && game.turn != widget.ai!.human) game.undo();
       last = game.history.isEmpty ? null : game.history.last.move;
       lastCap = false;
       over = null;
@@ -236,11 +297,13 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       _ac.value = 1;
       _pulse.value = 1;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAi());
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final Animation<double> enter = ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation;
     _syncRecord();
     String msg;
     if (over != null) {
@@ -253,7 +316,9 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
       msg = trf('{s}走棋', {'s': _name(game.turn)});
     }
     final base = tr(widget.free ? '自由模式' : '普通对局');
-    final title = online ? '$base · ${tr('联机')}' : base;
+    final title = online
+        ? '$base · ${tr('联机')}'
+        : (_aiOn ? '$base · ${tx('对战 AI')} ${aiLevelName(widget.ai!.level)}' : base);
 
     return Stack(
       fit: StackFit.expand,
@@ -264,7 +329,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           body: SafeArea(
             child: Column(
               children: [
-                SizedBox(
+                Stagger(anim: enter, begin: 0.30, end: 0.62, from: const Offset(0, -0.5), child: SizedBox(
                   height: 44,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -278,28 +343,32 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                           mine: online && mySide == Side.red),
                     ],
                   ),
-                ),
-                SizedBox(
+                )),
+                Stagger(anim: enter, begin: 0.36, end: 0.68, from: const Offset(0, -0.4), child: SizedBox(
                   height: 40,
                   child: Center(
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 250),
                       transitionBuilder: (c, a) =>
                           FadeTransition(opacity: a, child: ScaleTransition(scale: a, child: c)),
-                      child: Text(
-                        msg,
-                        key: ValueKey(msg),
-                        style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.w700,
-                          color: over != null ? cs.primary : cs.onSurface,
-                        ),
-                      ),
+                      child: _aiThinking
+                          ? ThinkingLabel(
+                              key: const ValueKey('thinking'),
+                              color: widget.ai!.level == 4 ? const Color(0xFFFF3D3D) : cs.primary)
+                          : Text(
+                              msg,
+                              key: ValueKey(msg),
+                              style: TextStyle(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w700,
+                                color: over != null ? cs.primary : cs.onSurface,
+                              ),
+                            ),
                     ),
                   ),
-                ),
+                )),
                 Expanded(
-                  child: Center(
+                  child: Stagger(anim: enter, begin: 0.38, end: 0.92, from: const Offset(0, 0.04), child: Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       child: AspectRatio(
@@ -328,9 +397,9 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                         }),
                       ),
                     ),
-                  ),
+                  )),
                 ),
-                ActionBar(
+                Stagger(anim: enter, begin: 0.55, end: 1.0, from: const Offset(0, 0.9), child: ActionBar(
                   children: [
                     if (app.dev)
                       LitToggle(
@@ -387,7 +456,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
                         onChanged: (v) => setState(() => autoMate = v),
                       ),
                   ],
-                ),
+                )),
               ],
             ),
           ),
