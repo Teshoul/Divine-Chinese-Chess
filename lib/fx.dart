@@ -50,9 +50,13 @@ Route<void> revealRoute(Widget page) {
         child: child,
         builder: (context, ch) {
           final size = MediaQuery.sizeOf(context);
+          final v = t.value;
           return ClipPath(
-            clipper: CircleClipper(origin, _maxR(size, origin) * t.value),
-            child: ch,
+            clipper: CircleClipper(origin, _maxR(size, origin) * v),
+            child: Opacity(
+              opacity: Curves.easeOut.transform((v * 1.8).clamp(0.0, 1.0)),
+              child: Transform.scale(scale: 1.035 - 0.035 * v, child: ch),
+            ),
           );
         },
       );
