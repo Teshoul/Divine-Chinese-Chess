@@ -1,4 +1,8 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'ai_glue.dart';
+import 'ai_ui.dart';
+import 'enter_fx.dart';
 import 'engine.dart';
 import 'blind.dart';
 import 'board_draw.dart';
@@ -10,8 +14,15 @@ class BlindSetupPage extends StatefulWidget {
   final String buttonText;
   final BlindConfig? initial;
   final void Function(BuildContext, BlindConfig) onConfirm;
+  final void Function(BuildContext, BlindConfig, AiPlan?)? onStart;
+  final bool showAi;
   const BlindSetupPage(
-      {super.key, required this.buttonText, required this.onConfirm, this.initial});
+      {super.key,
+      required this.buttonText,
+      required this.onConfirm,
+      this.initial,
+      this.onStart,
+      this.showAi = false});
 
   @override
   State<BlindSetupPage> createState() => _BlindSetupPageState();
@@ -22,6 +33,37 @@ class _BlindSetupPageState extends State<BlindSetupPage> {
   late List<List<bool>> up;
   late bool kp;
   late bool ae;
+  final GlobalKey<SlideAwayState> _away = GlobalKey<SlideAwayState>();
+  bool aiOn = false;
+  int aiLevel = 2;
+  int aiSide = 0;
+  bool _starting = false;
+
+  BlindConfig _cfg() => BlindConfig(
+        up: [for (final row in up) List<bool>.from(row)],
+        kingInPalace: kp,
+        advElephantLimit: ae,
+      );
+
+  Future<void> _go() async {
+    if (!widget.showAi || widget.onStart == null) {
+      widget.onConfirm(context, _cfg());
+      return;
+    }
+    if (_starting) return;
+    _starting = true;
+    AiPlan? plan;
+    if (aiOn) {
+      final human = aiSide == 2
+          ? (Random().nextBool() ? Side.red : Side.black)
+          : (aiSide == 0 ? Side.red : Side.black);
+      plan = AiPlan(aiLevel, human);
+    }
+    final cfg = _cfg();
+    await _away.currentState?.run();
+    if (!mounted) return;
+    widget.onStart!(context, cfg, plan);
+  }
 
   static const _types = [
     PType.king,
@@ -142,7 +184,9 @@ class _BlindSetupPageState extends State<BlindSetupPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Scaffold(
+    return SlideAway(
+        key: _away,
+        child: Scaffold(
       appBar: AppBar(title: Text(tr('盲棋设置'))),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -220,16 +264,28 @@ class _BlindSetupPageState extends State<BlindSetupPage> {
               ],
             ),
           ),
-          const SizedBox(height: 4),
-          FilledButton(
-            onPressed: () => widget.onConfirm(
-              context,
-              BlindConfig(
-                up: [for (final row in up) List<bool>.from(row)],
-                kingInPalace: kp,
-                advElephantLimit: ae,
+          if (widget.showAi)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: styled(cs.surfaceContainerHigh, r: app.cardR),
+                child: AiSection(
+                  on: aiOn,
+                  level: aiLevel,
+                  side: aiSide,
+                  blind: true,
+                  onChanged: (on, lv, sd) => setState(() {
+                    aiOn = on;
+                    aiLevel = lv;
+                    aiSide = sd;
+                  }),
+                ),
               ),
             ),
+          const SizedBox(height: 4),
+          FilledButton(
+            onPressed: _go,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Text(widget.buttonText, style: const TextStyle(fontSize: 17)),
@@ -237,7 +293,7 @@ class _BlindSetupPageState extends State<BlindSetupPage> {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
