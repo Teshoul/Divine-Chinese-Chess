@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'ai_glue.dart';
+import 'sfx.dart';
 import 'ai_ui.dart';
 import 'enter_fx.dart';
 import 'engine.dart';
@@ -52,6 +53,7 @@ class _BlindSetupPageState extends State<BlindSetupPage> {
     }
     if (_starting) return;
     _starting = true;
+    Sfx.I.click();
     AiPlan? plan;
     if (aiOn) {
       final human = aiSide == 2
