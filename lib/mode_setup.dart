@@ -7,6 +7,7 @@ import 'enter_fx.dart';
 import 'game_page.dart';
 import 'lobby.dart';
 import 'settings.dart';
+import 'sfx.dart';
 import 'strings.dart';
 import 'ui.dart';
 
@@ -29,6 +30,7 @@ class _ModeSetupPageState extends State<ModeSetupPage> {
   Future<void> _start(bool free) async {
     if (_starting) return;
     _starting = true;
+    Sfx.I.click();
     AiPlan? plan;
     if (!free && aiOn) {
       final human = aiSide == 2
