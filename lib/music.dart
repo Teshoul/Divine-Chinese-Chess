@@ -273,7 +273,7 @@ class _MusicPageState extends State<MusicPage> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
-      appBar: AppBar(title: Text(tr('音乐播放器'))),
+      appBar: AppBar(automaticallyImplyLeading: false, title: Text(tr('音乐播放器'))),
       body: AnimatedBuilder(
         animation: m,
         builder: (context, _) {
@@ -357,7 +357,7 @@ class _MusicPageState extends State<MusicPage> {
                         ),
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
                         itemCount: m.tracks.length,
                         itemBuilder: (c, i) {
                           final t = m.tracks[i];
