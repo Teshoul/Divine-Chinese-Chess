@@ -4,6 +4,8 @@ import 'fx.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'ai_ui.dart';
+import 'sfx.dart';
 import 'extras.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -161,9 +163,9 @@ class SettingsPage extends StatelessWidget {
           'black': '黑方棋色',
         };
         return Scaffold(
-          appBar: AppBar(title: Text(tr('设置'))),
+          appBar: AppBar(automaticallyImplyLeading: false, title: Text(tr('设置'))),
           body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
             children: [
               _sec(context, '主题',
                   Wrap(spacing: 10, runSpacing: 10, children: [for (final p in app.presets) _preset(context, p)])),
@@ -235,7 +237,7 @@ class SettingsPage extends StatelessWidget {
                         LitToggle(
                             wide: true,
                             icon: Icons.water_drop,
-                            label: tr('液态玻璃质感'),
+                            label: tr('果冻质感'),
                             value: app.glass,
                             onChanged: (v) => app.change(() => app.glass = v)),
                         LitToggle(
@@ -244,6 +246,12 @@ class SettingsPage extends StatelessWidget {
                             label: tr('主题装饰图案'),
                             value: app.decor,
                             onChanged: (v) => app.change(() => app.decor = v)),
+                        LitToggle(
+                            wide: true,
+                            icon: Icons.volume_up,
+                            label: tx('音效'),
+                            value: app.sfxOn,
+                            onChanged: (v) => app.change(() => app.sfxOn = v)),
                       ],
                     ),
                   ],
@@ -298,7 +306,7 @@ class SettingsPage extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(tr('开源仓库： https://github.com/Teshoul/Divine-Chinese-Chess')),
                     const SizedBox(height: 6),
-                    Text('${tr('版本')} 1.5.1'),
+                    Text('${tr('版本')} 1.5.2'),
                     const SizedBox(height: 6),
                     Text('${tr('存储状态')}：${app.storageStatus}', style: const TextStyle(fontSize: 12)),
                   ],
