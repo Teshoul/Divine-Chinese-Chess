@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter, lerpDouble;
 import 'package:flutter/material.dart';
+import 'avatar_drawer.dart';
+import 'fly.dart';
 import 'glitch.dart';
 import 'items.dart';
 import 'liquid.dart';
@@ -9,7 +11,7 @@ import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
 
-/// 头像框。x 从 0 到 1 时，头像会渐变成 X
+/// 头像框。x 从 0 到 1 时，头像会渐变成 X（x 可以略微超过 1，用来做 Q 弹的回弹）
 class AvatarBox extends StatelessWidget {
   final double size;
   final double x;
@@ -29,6 +31,7 @@ class AvatarBox extends StatelessWidget {
             : null;
         final r = size * 0.2;
         final bw = max(2.0, size * 0.045);
+        final xo = x.clamp(0.0, 1.0).toDouble();
         final Widget inner = isStar
             ? const StarAvatarFill()
             : (f != null
@@ -47,14 +50,17 @@ class AvatarBox extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Opacity(opacity: 1 - x, child: inner),
-                if (x > 0)
+                Opacity(opacity: 1 - xo, child: inner),
+                if (xo > 0)
                   Opacity(
-                    opacity: x,
+                    opacity: xo,
                     child: Transform.rotate(
                       angle: (x - 1) * pi / 2,
-                      child: Center(
-                          child: Icon(Icons.close, size: size * 0.55, color: cs.onSurface)),
+                      child: Transform.scale(
+                        scale: 0.55 + 0.45 * x,
+                        child: Center(
+                            child: Icon(Icons.close, size: size * 0.55, color: cs.onSurface)),
+                      ),
                     ),
                   ),
               ],
@@ -73,7 +79,7 @@ class AvatarBox extends StatelessWidget {
               Positioned(
                 right: -size * 0.14,
                 bottom: -size * 0.14,
-                child: Opacity(opacity: 1 - x, child: CornerView(id: corner, size: size * 0.42)),
+                child: Opacity(opacity: 1 - xo, child: CornerView(id: corner, size: size * 0.42)),
               ),
             ],
           ),
@@ -83,11 +89,21 @@ class AvatarBox extends StatelessWidget {
   }
 }
 
-/// 个人资料层：头像按钮始终在最上面，点击后变 X，面板从头像处展开
+/// 个人资料层：头像按钮始终在最上面。
+/// 点开时：头像方块先极快向右拉宽 → 略微停顿 → 极快向下拉长 → 内容渐显，Q 弹地变成 X；关闭是倒放。
 class ProfileLayer extends StatelessWidget {
   final Animation<double> anim;
   final VoidCallback onToggle;
   const ProfileLayer({super.key, required this.anim, required this.onToggle});
+
+  Rect _stageRect(double u, Rect o, Rect t, double screenW) {
+    double eb(double x) => Curves.easeOutBack.transform(x.clamp(0.0, 1.0));
+    final a = eb(u / 0.20);
+    final c = eb((u - 0.28) / 0.22);
+    final w = lerpDouble(o.width, t.width, a)!.clamp(o.width, screenW - o.left).toDouble();
+    final h = lerpDouble(o.height, t.height, c)!.clamp(o.height, 4000.0).toDouble();
+    return Rect.fromLTWH(o.left, o.top, w, h);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -107,19 +123,20 @@ class ProfileLayer extends StatelessWidget {
         AnimatedBuilder(
           animation: anim,
           builder: (context, _) {
-            if (anim.value == 0) return const SizedBox.shrink();
-            final t = Curves.easeInOutCubic.transform(anim.value);
-            final rect = Rect.lerp(origin, target, t)!;
-            final content = max(0.0, (t - 0.5) / 0.5);
-            final radius = lerpDouble(10, app.cardR + 6, t)!;
+            final u = anim.value;
+            if (u == 0) return const SizedBox.shrink();
+            final rect = _stageRect(u, Rect.fromLTWH(16, top, 52, 52), target, size.width);
+            final dim = Curves.easeOut.transform(((u - 0.2) / 0.8).clamp(0.0, 1.0));
+            final content = Curves.easeOut.transform(((u - 0.55) / 0.45).clamp(0.0, 1.0));
+            final radius = lerpDouble(10, app.cardR + 6, Curves.easeOut.transform((u / 0.5).clamp(0.0, 1.0)))!;
             return Stack(
               fit: StackFit.expand,
               children: [
                 GestureDetector(
                   onTap: onToggle,
                   child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 0.01 + 14 * t, sigmaY: 0.01 + 14 * t),
-                    child: ColoredBox(color: Colors.black.withOpacity(0.35 * t)),
+                    filter: ImageFilter.blur(sigmaX: 0.01 + 14 * dim, sigmaY: 0.01 + 14 * dim),
+                    child: ColoredBox(color: Colors.black.withOpacity(0.35 * dim)),
                   ),
                 ),
                 Positioned.fromRect(
@@ -154,14 +171,16 @@ class ProfileLayer extends StatelessWidget {
           },
         ),
         Positioned(
-          left: 16,
-          top: top,
+          left: origin.left,
+          top: origin.top,
           child: GestureDetector(
             onTap: onToggle,
             child: AnimatedBuilder(
               animation: anim,
-              builder: (context, _) =>
-                  AvatarBox(size: 52, x: Curves.easeInOutCubic.transform(anim.value)),
+              builder: (context, _) => AvatarBox(
+                size: 52,
+                x: Curves.elasticOut.transform((anim.value / 0.5).clamp(0.0, 1.0)),
+              ),
             ),
           ),
         ),
@@ -191,6 +210,15 @@ class _ProfileContentState extends State<ProfileContent> {
   late final TextEditingController uidC = TextEditingController(text: app.uid);
   late final TextEditingController bioC = TextEditingController(text: app.bio);
 
+  final GlobalKey _avKey = GlobalKey();
+  final GlobalKey _rowKey = GlobalKey();
+  final Map<String, GlobalKey> _tileKeys = <String, GlobalKey>{};
+  final Map<String, GlobalKey> _wornKeys = <String, GlobalKey>{};
+  String? _hiddenItem;
+
+  GlobalKey _tileKey(String id) => _tileKeys.putIfAbsent(id, () => GlobalKey());
+  GlobalKey _wornKey(String id) => _wornKeys.putIfAbsent(id, () => GlobalKey());
+
   @override
   void initState() {
     super.initState();
@@ -204,43 +232,6 @@ class _ProfileContentState extends State<ProfileContent> {
     uidC.dispose();
     bioC.dispose();
     super.dispose();
-  }
-
-  Future<void> _addAvatar() async {
-    final p = await pickImage();
-    if (p == null) return;
-    app.touchAvatar(() {
-      if (!app.avatars.contains(p)) app.avatars.add(p);
-      app.avatar = p;
-    });
-    if (mounted) setState(() {});
-  }
-
-  void _select(String p) {
-    app.touchAvatar(() => app.avatar = p);
-    setState(() {});
-  }
-
-  Future<void> _delete(String p) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        content: Text(tr('删除这张头像？')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr('取消'))),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text(tr('确定'))),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    app.touchAvatar(() {
-      app.avatars.remove(p);
-      if (app.avatar == p) app.avatar = null;
-    });
-    try {
-      File(p).deleteSync();
-    } catch (_) {}
-    if (mounted) setState(() {});
   }
 
   Future<void> _pickBirthday() async {
@@ -301,92 +292,132 @@ class _ProfileContentState extends State<ProfileContent> {
     }
   }
 
-  Widget _thumb(String p) {
-    final cs = Theme.of(context).colorScheme;
-    final sel = app.avatar == p;
-    final Widget img = p == kStarAvatar
-        ? const StarAvatarFill()
-        : Image.file(File(p),
-            fit: BoxFit.cover,
-            cacheWidth: 160,
-            errorBuilder: (c, e, s) => const Icon(Icons.broken_image));
-    return GestureDetector(
-      onTap: () => _select(p),
-      onLongPress: p == kStarAvatar ? null : () => _delete(p),
-      child: Container(
-        width: 56,
-        height: 56,
-        margin: const EdgeInsets.only(right: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: sel ? app.primary : cs.outline.withOpacity(0.4), width: sel ? 3 : 1),
-        ),
-        child: ClipRRect(borderRadius: BorderRadius.circular(8), child: img),
-      ),
+  // ───────────── 徽标 / 角标：飞行动画 ─────────────
+
+  Rect _cornerRect(Rect av) =>
+      Rect.fromLTWH(av.right - 0.28 * av.width, av.bottom - 0.28 * av.width, 0.42 * av.width, 0.42 * av.width);
+
+  void _tapBadge(Item it) {
+    if (_hiddenItem != null) return;
+    final id = it.id;
+    final tile = globalRectOf(_tileKey(id));
+    if (app.eqBadges.contains(id)) {
+      // 取消佩戴：已经戴着的徽标先快后慢地飞回徽标库里它的位置
+      final worn = globalRectOf(_wornKey(id));
+      app.toggleBadge(id);
+      setState(() {});
+      if (worn != null && tile != null) {
+        setState(() => _hiddenItem = id);
+        flyTo(
+          context,
+          from: worn,
+          to: tile,
+          child: BadgeView(id: id, h: worn.height),
+          onDone: () {
+            if (mounted) setState(() => _hiddenItem = null);
+          },
+        );
+      }
+      return;
+    }
+    final row = globalRectOf(_rowKey);
+    if (tile == null || row == null) {
+      app.toggleBadge(id);
+      setState(() {});
+      return;
+    }
+    final dest = Rect.fromLTWH(
+      row.right + (app.eqBadges.isEmpty ? 0 : 4),
+      row.top + (row.height - tile.height) / 2,
+      tile.width,
+      tile.height,
+    );
+    setState(() => _hiddenItem = id);
+    flyTo(
+      context,
+      from: tile,
+      to: dest,
+      child: BadgeView(id: id, h: tile.height),
+      onDone: () {
+        app.toggleBadge(id);
+        if (mounted) setState(() => _hiddenItem = null);
+      },
     );
   }
 
-  Widget _gallery() {
-    final cs = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(tr('头像库'), style: const TextStyle(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 58,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              if (app.owns('avatar_star')) _thumb(kStarAvatar),
-              for (final p in app.avatars) _thumb(p),
-              GestureDetector(
-                onTap: _addAvatar,
-                child: Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: cs.outline.withOpacity(0.6)),
-                  ),
-                  child: Icon(Icons.add, color: cs.onSurfaceVariant),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(tr('长按头像可删除'), style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-      ],
+  void _tapCorner(Item it) {
+    if (_hiddenItem != null) return;
+    final id = it.id;
+    final tile = globalRectOf(_tileKey(id));
+    final av = globalRectOf(_avKey);
+    if (tile == null || av == null) {
+      app.setCorner(id);
+      setState(() {});
+      return;
+    }
+    final spot = _cornerRect(av);
+    if (app.eqCorner == id) {
+      // 取消：角标飞回库里
+      app.setCorner(id);
+      setState(() => _hiddenItem = id);
+      flyTo(
+        context,
+        from: spot,
+        to: tile,
+        child: CornerView(id: id, size: spot.width),
+        onDone: () {
+          if (mounted) setState(() => _hiddenItem = null);
+        },
+      );
+      return;
+    }
+    final old = app.eqCorner;
+    if (old != null) {
+      final oldTile = globalRectOf(_tileKey(old));
+      app.touchAvatar(() => app.eqCorner = null);
+      if (oldTile != null) {
+        flyTo(
+          context,
+          from: spot,
+          to: oldTile,
+          child: CornerView(id: old, size: spot.width),
+        );
+      }
+    }
+    setState(() => _hiddenItem = id);
+    flyTo(
+      context,
+      from: tile,
+      to: spot,
+      child: CornerView(id: id, size: tile.width),
+      onDone: () {
+        app.setCorner(id);
+        if (mounted) setState(() => _hiddenItem = null);
+      },
     );
   }
 
   Widget _itemTile(Item it, bool on, VoidCallback tap) {
     final cs = Theme.of(context).colorScheme;
-    return GestureDetector(
+    final hidden = _hiddenItem == it.id;
+    final preview = Opacity(
+      opacity: hidden ? 0.0 : 1.0,
+      child: it.kind == ItemKind.badge
+          ? BadgeView(key: _tileKey(it.id), id: it.id, h: 18)
+          : CornerView(key: _tileKey(it.id), id: it.id, size: 26),
+    );
+    return PressBox(
+      color: on ? Color.lerp(cs.surfaceContainerHighest, app.primary, 0.5)! : cs.surfaceContainerHighest,
+      r: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       onTap: tap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(app.toggleShape == 0 ? 20 : 8),
-          color: on ? app.primary.withOpacity(0.28) : cs.onSurface.withOpacity(0.05),
-          border: Border.all(
-              color: on ? app.primary : cs.outline.withOpacity(0.5), width: on ? 2 : 1.2),
-          boxShadow:
-              on ? [BoxShadow(color: app.primary.withOpacity(0.45), blurRadius: 10)] : const [],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            it.kind == ItemKind.badge
-                ? BadgeView(id: it.id, h: 18)
-                : CornerView(id: it.id, size: 26),
-            const SizedBox(width: 8),
-            Text(tr(it.name), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-          ],
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          preview,
+          const SizedBox(width: 8),
+          Text(tr(it.name), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+        ],
       ),
     );
   }
@@ -418,10 +449,7 @@ class _ProfileContentState extends State<ProfileContent> {
               runSpacing: 8,
               children: [
                 for (final it in badges)
-                  _itemTile(it, app.eqBadges.contains(it.id), () {
-                    app.toggleBadge(it.id);
-                    setState(() {});
-                  }),
+                  _itemTile(it, app.eqBadges.contains(it.id), () => _tapBadge(it)),
               ],
             ),
           ],
@@ -434,10 +462,7 @@ class _ProfileContentState extends State<ProfileContent> {
               runSpacing: 8,
               children: [
                 for (final it in corners)
-                  _itemTile(it, app.eqCorner == it.id, () {
-                    app.setCorner(it.id);
-                    setState(() {});
-                  }),
+                  _itemTile(it, app.eqCorner == it.id, () => _tapCorner(it)),
               ],
             ),
           ],
@@ -482,7 +507,7 @@ class _ProfileContentState extends State<ProfileContent> {
       children: [
         Row(
           children: [
-            GestureDetector(onTap: _addAvatar, child: const AvatarBox(size: 92)),
+            Container(key: _avKey, child: const AvatarBox(size: 92)),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
@@ -508,7 +533,12 @@ class _ProfileContentState extends State<ProfileContent> {
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerLeft,
-                          child: BadgesRow(ids: List<String>.from(app.eqBadges), h: 18),
+                          child: BadgesRow(
+                            key: _rowKey,
+                            ids: List<String>.from(app.eqBadges),
+                            h: 18,
+                            keys: _wornKeys,
+                          ),
                         ),
                       ),
                     ],
@@ -522,7 +552,9 @@ class _ProfileContentState extends State<ProfileContent> {
           ],
         ),
         const SizedBox(height: 16),
-        _gallery(),
+        AvatarDrawer(avatarKey: _avKey, onChanged: () {
+          if (mounted) setState(() {});
+        }),
         const SizedBox(height: 16),
         _wardrobe(),
         TextField(
@@ -542,7 +574,7 @@ class _ProfileContentState extends State<ProfileContent> {
           onPressed: _pickBirthday,
           icon: const Icon(Icons.cake, size: 18),
           label: Text(app.birthday.isEmpty
-              ? tr('设置生日')
+              ? tr('设置生日（你的生日是什么时候啊？）')
               : '${tr('生日')}  ${birthdayText(app.birthday)}'),
         ),
         const SizedBox(height: 16),
