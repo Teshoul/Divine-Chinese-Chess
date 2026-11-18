@@ -54,7 +54,7 @@ const List<Preset> kPresets = [
   Preset(
     id: 'guofeng',
     name: '古风',
-    hidText: '暗',
+    hidText: '玄',
     seed: Color(0xFFB23A2E),
     boardBg: Color(0xFFE9CB93),
     boardLine: Color(0xFF5B3A1E),
@@ -230,6 +230,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   bool glass = false;
   bool decor = true;
   bool festOn = true;
+  bool sfxOn = true;
   String festPreview = '';
   String prankOff = '';
   bool dev = false;
@@ -414,6 +415,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     glass = _b(j['glass'], false);
     decor = _b(j['decor'], true);
     festOn = _b(j['fest'], true);
+    sfxOn = _b(j['sfx'], true);
     prankOff = _s(j['prankOff'], '');
     unlocked.clear();
     final u = j['unlocked'];
@@ -497,6 +499,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'glass': glass,
         'decor': decor,
         'fest': festOn,
+        'sfx': sfxOn,
         'prankOff': prankOff,
         'dev': dev,
         'unlocked': unlocked.toList(),
