@@ -111,6 +111,12 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
       mv = null;
     }
     if (!mounted || gen != _aiGen) return;
+    // 等玩家那一步的移动动画播完，再让 AI 落子，避免棋子看起来“瞬移”
+    while (mounted && gen == _aiGen && _ac.isAnimating) {
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 160));
+    if (!mounted || gen != _aiGen) return;
     final Move? pick = (mv != null && _legalForAi(mv)) ? mv : _randomAiMove();
     setState(() {
       _aiThinking = false;
