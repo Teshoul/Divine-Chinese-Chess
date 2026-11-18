@@ -86,7 +86,8 @@ class BadgeView extends StatelessWidget {
 class BadgesRow extends StatelessWidget {
   final List<String> ids;
   final double h;
-  const BadgesRow({super.key, required this.ids, this.h = 16});
+  final Map<String, GlobalKey>? keys;
+  const BadgesRow({super.key, required this.ids, this.h = 16, this.keys});
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +98,7 @@ class BadgesRow extends StatelessWidget {
         for (final id in ids)
           Padding(
             padding: const EdgeInsets.only(left: 4),
-            child: BadgeView(id: id, h: h),
+            child: BadgeView(key: keys?[id], id: id, h: h),
           ),
       ],
     );
