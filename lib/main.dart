@@ -17,6 +17,10 @@ import 'strings.dart';
 import 'ui.dart';
 import 'ai_glue.dart';
 import 'enter_fx.dart';
+import 'ai_ui.dart';
+import 'expand_route.dart';
+import 'fly.dart';
+import 'sfx.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,6 +44,7 @@ void main() {
       .timeout(const Duration(seconds: 8))
       .then((_) => app.change(() {}))
       .catchError((_) {});
+  Sfx.I.init();
 }
 
 ThemeData buildTheme(Brightness b) {
@@ -127,7 +132,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       vsync: this, duration: const Duration(milliseconds: 1100))
     ..forward();
   late final AnimationController _pc =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+      AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 1000),
+          reverseDuration: const Duration(milliseconds: 820));
   late final Ticker _tick = createTicker(_onTick);
   final ValueNotifier<int> _frame = ValueNotifier<int>(0);
 
@@ -219,6 +227,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   void _openMode(int i) {
     if (_opening) return;
+    Sfx.I.click();
     _opening = true;
     final Widget page;
     switch (i) {
@@ -254,6 +263,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   void _toggleProfile() {
+    Sfx.I.click();
     setState(() => open = !open);
     if (open) {
       _pc.forward();
@@ -397,6 +407,58 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
+  final GlobalKey _musicKey = GlobalKey();
+  final GlobalKey _setKey = GlobalKey();
+
+  Widget _squareBtn(GlobalKey k, IconData icon, Color color, VoidCallback onTap) {
+    final face = app.divine ? const Color(0xFFB71C1C) : color;
+    final glow = app.divine ? const Color(0xFFFFC107) : color;
+    final ink = ThemeData.estimateBrightnessForColor(face) == Brightness.dark
+        ? Colors.white
+        : Colors.black87;
+    return SizedBox(
+      key: k,
+      width: 62,
+      height: 61,
+      child: ChunkyButton(
+        selected: false,
+        onTap: onTap,
+        face: face,
+        faceOn: face,
+        glow: glow,
+        height: 56,
+        radius: 14,
+        depth: 5,
+        haptic: 1,
+        child: Icon(icon, color: ink, size: 28),
+      ),
+    );
+  }
+
+  void _openSquare(GlobalKey k, Widget page, bool rightward, Color color, IconData icon) {
+    final r = globalRectOf(k);
+    if (r == null) {
+      Navigator.push(context, revealRoute(page));
+      return;
+    }
+    final face = app.divine ? const Color(0xFFB71C1C) : color;
+    final ink = ThemeData.estimateBrightnessForColor(face) == Brightness.dark
+        ? Colors.white
+        : Colors.black87;
+    final origin = Rect.fromLTWH(r.left, r.top, r.width, r.height - 5);
+    Navigator.push(
+      context,
+      squareExpandRoute(
+        page: page,
+        origin: origin,
+        rightward: rightward,
+        color: face,
+        icon: icon,
+        iconColor: ink,
+      ),
+    );
+  }
+
   Widget _roundBtn(IconData icon, VoidCallback onTap, double phase) {
     if (app.divine) {
       return GestureDetector(
@@ -461,23 +523,27 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         bottom: 20,
                         child: AnimatedBuilder(
                           animation: MusicService.I,
-                          builder: (context, _) => _roundBtn(
+                          builder: (context, _) => _squareBtn(
+                            _musicKey,
                             MusicService.I.playing ? Icons.graphic_eq : Icons.music_note,
-                            () => Navigator.push(context, revealRoute(const MusicPage())),
-                            2.0,
+                            app.preset.tiles[1],
+                            () => _openSquare(_musicKey, const MusicPage(), true,
+                                app.preset.tiles[1], Icons.music_note),
                           ),
                         ),
                       ),
                       Positioned(
                         right: 20,
                         bottom: 20,
-                        child: _roundBtn(
+                        child: _squareBtn(
+                          _setKey,
                           Icons.settings,
+                          app.primary,
                           () {
                             if (prank.gate(context, 'settings', '请检查网络！')) return;
-                            Navigator.push(context, revealRoute(const SettingsPage()));
+                            _openSquare(_setKey, const SettingsPage(), false, app.primary,
+                                Icons.settings);
                           },
-                          0.0,
                         ),
                       ),
                     ],
