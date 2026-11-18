@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'settings.dart';
+import 'sfx.dart';
 
 // ───────────── 文字（中 / 英 / 日 / 俄）─────────────
 
@@ -73,6 +74,22 @@ const Map<String, List<String>> _tx = {
   '随机': ['Random', 'ランダム', 'Случайно'],
   'AI 思考中': ['AI is thinking', 'AI思考中', 'ИИ думает'],
   '对战 AI': ['vs AI', 'AI戦', 'против ИИ'],
+  '头像库': ['Avatar library', 'アバターライブラリ', 'Библиотека аватаров'],
+  '长按拖动可调整顺序，拖到右上角的垃圾桶可删除': [
+    'Long-press and drag to reorder; drop on the bin at the top right to delete.',
+    '長押ししてドラッグで並べ替え、右上のゴミ箱に落とすと削除できます。',
+    'Удерживайте и перетаскивайте, чтобы менять порядок; бросьте в корзину справа вверху, чтобы удалить.'
+  ],
+  '把头像拖到这里可以删除': ['Drag an avatar here to delete it', 'アバターをここにドラッグすると削除できます', 'Перетащите аватар сюда, чтобы удалить'],
+  '删除头像': ['Delete avatar', 'アバターを削除', 'Удалить аватар'],
+  '确定要从头像库删除这张头像吗？删除后无法恢复。': [
+    'Delete this avatar from the library? This cannot be undone.',
+    'このアバターをライブラリから削除しますか？元に戻せません。',
+    'Удалить этот аватар из библиотеки? Это нельзя отменить.'
+  ],
+  '删除': ['Delete', '削除', 'Удалить'],
+  '取消': ['Cancel', 'キャンセル', 'Отмена'],
+  '音效': ['Sound effects', '効果音', 'Звуки'],
 };
 
 String tx(String zh) {
@@ -235,6 +252,7 @@ class ChunkyButton extends StatefulWidget {
   final double depth;
   final int haptic; // 0 轻点 1 轻 2 中 3 重
   final bool pulse;
+  final bool silent;
   const ChunkyButton({
     super.key,
     required this.child,
@@ -248,6 +266,7 @@ class ChunkyButton extends StatefulWidget {
     this.depth = 5,
     this.haptic = 0,
     this.pulse = false,
+    this.silent = false,
   });
 
   @override
@@ -308,6 +327,7 @@ class _ChunkyButtonState extends State<ChunkyButton> with TickerProviderStateMix
   }
 
   void _tap() {
+    if (!widget.silent) Sfx.I.click();
     switch (widget.haptic) {
       case 0:
         HapticFeedback.selectionClick();
@@ -574,6 +594,7 @@ class _AiSectionState extends State<AiSection> {
     return ChunkyButton(
       selected: sel,
       onTap: () {
+        Sfx.I.level(i);
         setState(() => _pulse++);
         widget.onChanged(true, i, widget.side);
       },
@@ -585,6 +606,7 @@ class _AiSectionState extends State<AiSection> {
       depth: 5,
       haptic: i <= 1 ? 0 : (i == 2 ? 1 : (i == 3 ? 2 : 3)),
       pulse: i == 4,
+      silent: true,
       child: ShakeFx(
         level: i,
         active: sel,
