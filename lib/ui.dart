@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
+import 'sfx.dart';
 import 'decor.dart';
 import 'engine.dart';
 import 'settings.dart';
@@ -153,7 +154,12 @@ class _PressBoxState extends State<PressBox> {
         onTapDown: en ? (_) => setState(() => down = true) : null,
         onTapUp: en ? (_) => setState(() => down = false) : null,
         onTapCancel: en ? () => setState(() => down = false) : null,
-        onTap: widget.onTap,
+        onTap: widget.onTap == null
+            ? null
+            : () {
+                Sfx.I.click();
+                widget.onTap!();
+              },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 90),
           width: widget.width,
@@ -349,7 +355,12 @@ class LitToggle extends StatelessWidget {
           );
     Widget w = GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: enabled ? () => onChanged(!value) : null,
+      onTap: enabled
+          ? () {
+              Sfx.I.click();
+              onChanged(!value);
+            }
+          : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
