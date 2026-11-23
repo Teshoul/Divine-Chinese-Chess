@@ -171,6 +171,36 @@ Future<String> exportBackup(BuildContext context) async {
       }
     }
     snap['avatars'] = list;
+    // 头像编辑数据：键换成压缩包里的文件名，贴纸和静态快照也一起打包
+    final ae = snap['aedits'];
+    final aeOut = <String, dynamic>{};
+    if (ae is Map) {
+      for (final k in ae.keys.toList()) {
+        final key = put(k as String?, 'files');
+        final v = ae[k];
+        if (key == null || v is! Map) continue;
+        final nv = Map<String, dynamic>.from(v);
+        final sn = nv['snap'];
+        nv['snap'] = sn is String ? put(sn, 'files') : null;
+        final its = nv['it'];
+        if (its is List) {
+          final outIts = <Map<String, dynamic>>[];
+          for (final it in its) {
+            if (it is! Map) continue;
+            final m2 = Map<String, dynamic>.from(it);
+            if (m2['k'] == 'sticker') {
+              final e = put(m2['i'] as String?, 'files');
+              if (e == null) continue;
+              m2['i'] = e;
+            }
+            outIts.add(m2);
+          }
+          nv['it'] = outIts;
+        }
+        aeOut[key] = nv;
+      }
+    }
+    snap['aedits'] = aeOut;
     final ly = snap['layers'];
     if (ly is Map) {
       for (final k in ly.keys.toList()) {
@@ -267,6 +297,34 @@ Future<String> importBackup(BuildContext context) async {
       }
     }
     m['avatars'] = av;
+    final aeIn = m['aedits'];
+    final aeNew = <String, dynamic>{};
+    if (aeIn is Map) {
+      for (final k in aeIn.keys.toList()) {
+        final key = mp(k);
+        final v = aeIn[k];
+        if (key == null || v is! Map) continue;
+        final nv = Map<String, dynamic>.from(v);
+        nv['snap'] = mp(nv['snap']);
+        final its = nv['it'];
+        if (its is List) {
+          final outIts = <Map<String, dynamic>>[];
+          for (final it in its) {
+            if (it is! Map) continue;
+            final m2 = Map<String, dynamic>.from(it);
+            if (m2['k'] == 'sticker') {
+              final e = mp(m2['i']);
+              if (e == null) continue;
+              m2['i'] = e;
+            }
+            outIts.add(m2);
+          }
+          nv['it'] = outIts;
+        }
+        aeNew[key] = nv;
+      }
+    }
+    m['aedits'] = aeNew;
     final ly = m['layers'];
     if (ly is Map) {
       for (final k in ly.keys.toList()) {
