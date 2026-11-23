@@ -1,7 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'ai_ui.dart';
+import 'avatar_editor.dart';
+import 'avatar_view.dart';
 import 'fly.dart';
+import 'img_util.dart';
+import 'strings.dart';
 import 'glitch.dart';
 import 'settings.dart';
 
@@ -10,12 +14,7 @@ Widget avatarThumb(String p,
     {double size = 56, bool selected = false, bool lifted = false}) {
   final Widget img = p == kStarAvatar
       ? const StarAvatarFill()
-      : Image.file(
-          File(p),
-          fit: BoxFit.cover,
-          cacheWidth: 200,
-          errorBuilder: (c, e, s) => const Icon(Icons.broken_image),
-        );
+      : AvatarImage(path: p, cache: 200);
   final r = size * 0.18;
   return Container(
     width: size,
@@ -63,14 +62,36 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
   bool _open = false;
   bool _dragging = false;
   String? _hidden;
-  final Map<String, GlobalKey> _keys = <String, GlobalKey>{};
 
-  GlobalKey _k(String p) => _keys.putIfAbsent(p, () => GlobalKey());
+  GlobalKey _k(String p) => avatarTileKey(p);
+
+  @override
+  void initState() {
+    super.initState();
+    avatarInFlight.addListener(_onFlight);
+  }
 
   @override
   void dispose() {
+    avatarInFlight.removeListener(_onFlight);
     _c.dispose();
     super.dispose();
+  }
+
+  /// 新头像要飞进来了：把它的格子滚到可见位置，飞行动画才能落在看得见的地方
+  void _onFlight() {
+    final p = avatarInFlight.value;
+    if (p == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = avatarTileKey(p).currentContext;
+      if (ctx == null || !ctx.mounted) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 380),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   void _toggle() {
@@ -118,15 +139,13 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
     widget.onChanged();
   }
 
+  /// 选好图片后不再直接加入头像库，而是交给个人主页打开“编辑头像”页，
+  /// 在那里裁剪 / 调色 / 涂鸦，点“确定上传”后才会飞进头像库
   Future<void> _add() async {
-    final p = await pickImage();
+    if (avatarInFlight.value != null || avatarEditRequest.value != null) return;
+    final p = await pickImageChoose(context);
     if (p == null) return;
-    app.touchAvatar(() {
-      if (!app.avatars.contains(p)) app.avatars.add(p);
-      app.avatar = p;
-    });
-    if (mounted) setState(() {});
-    widget.onChanged();
+    avatarEditRequest.value = p;
   }
 
   Future<void> _confirmDelete(String p) async {
@@ -181,14 +200,17 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
       },
     );
     if (ok != true) return;
+    final extra = app.dropAvatarEdit(p);
     app.touchAvatar(() {
       app.avatars.remove(p);
       if (app.avatar == p) app.avatar = null;
     });
-    try {
-      File(p).deleteSync();
-    } catch (_) {}
-    _keys.remove(p);
+    for (final f in <String>[p, ...extra]) {
+      try {
+        File(f).deleteSync();
+      } catch (_) {}
+    }
+    avatarTileKeys.remove(p);
     if (mounted) setState(() {});
     widget.onChanged();
   }
@@ -197,7 +219,7 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
     final sel = app.avatar == p;
     final visual = AnimatedOpacity(
       duration: const Duration(milliseconds: 120),
-      opacity: _hidden == p ? 0.0 : 1.0,
+      opacity: (_hidden == p || avatarInFlight.value == p) ? 0.0 : 1.0,
       child: avatarThumb(p, size: 56, selected: sel),
     );
     final core = KeyedSubtree(
@@ -292,6 +314,13 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
   }
 
   Widget _body(ColorScheme cs) {
+    return AnimatedBuilder(
+      animation: Listenable.merge(<Listenable>[app.avatarRev, avatarInFlight]),
+      builder: (context, _) => _bodyInner(cs),
+    );
+  }
+
+  Widget _bodyInner(ColorScheme cs) {
     final items = <Widget>[];
     if (app.owns('avatar_star')) items.add(_tile(kStarAvatar, fixed: true));
     for (final p in List<String>.from(app.avatars)) {
