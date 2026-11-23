@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'gif_export.dart';
 import 'music.dart';
 import 'settings.dart';
 import 'strings.dart';
@@ -142,7 +143,7 @@ Future<String> exportBackup(BuildContext context) async {
   var safe = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   if (safe.isEmpty) safe = _defaultName();
 
-  _showBusy(context, tr('正在打包备份，请稍候…'));
+  _showBusy(context, tr('正在打包备份，请稍候…（带动图贴纸的头像会合成 GIF，可能稍慢）'));
   var out = '';
   try {
     await MusicService.I.init();
@@ -161,12 +162,35 @@ Future<String> exportBackup(BuildContext context) async {
       return entry;
     }
 
-    snap['avatar'] = put(snap['avatar'] as String?, 'files');
+    // 带动图贴纸的头像：烘焙成 GIF 动图再导出（原画质），原来的编辑数据不再需要
+    final bake = <String, String>{};
+    final gifDir = Directory('${(await getTemporaryDirectory()).path}/avatar_gif');
+    try {
+      if (gifDir.existsSync()) gifDir.deleteSync(recursive: true);
+    } catch (_) {}
+    final ae0 = snap['aedits'];
+    if (ae0 is Map) {
+      var gi = 0;
+      for (final k in ae0.keys.toList()) {
+        final v = ae0[k];
+        if (k is! String || v is! Map || !File(k).existsSync()) continue;
+        final ej = Map<String, dynamic>.from(v);
+        try {
+          if (!await editHasAnimatedSticker(ej)) continue;
+          gifDir.createSync(recursive: true);
+          final o = '${gifDir.path}/avatar_${gi++}.gif';
+          if (await bakeAvatarGif(k, ej, o)) bake[k] = o;
+        } catch (_) {}
+      }
+    }
+    String? src(String? p) => (p != null && bake.containsKey(p)) ? bake[p] : p;
+
+    snap['avatar'] = put(src(snap['avatar'] as String?), 'files');
     final list = <String>[];
     final avs = snap['avatars'];
     if (avs is List) {
       for (final p in avs) {
-        final e = put(p as String?, 'files');
+        final e = put(src(p as String?), 'files');
         if (e != null) list.add(e);
       }
     }
@@ -176,6 +200,7 @@ Future<String> exportBackup(BuildContext context) async {
     final aeOut = <String, dynamic>{};
     if (ae is Map) {
       for (final k in ae.keys.toList()) {
+        if (bake.containsKey(k)) continue;
         final key = put(k as String?, 'files');
         final v = ae[k];
         if (key == null || v is! Map) continue;
@@ -232,6 +257,9 @@ Future<String> exportBackup(BuildContext context) async {
     }
     out = '${dir.path}/$safe.zip';
     await _zipInIsolate(out, pairs, body, sig);
+    try {
+      if (gifDir.existsSync()) gifDir.deleteSync(recursive: true);
+    } catch (_) {}
   } catch (e) {
     _hideBusy(context);
     return 'fail:$e';

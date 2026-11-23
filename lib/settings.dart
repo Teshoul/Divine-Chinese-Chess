@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'avatar_model.dart';
+import 'xform.dart';
 import 'festival.dart';
 import 'items.dart';
 
@@ -172,53 +173,39 @@ String signText(String s) {
 
 class ImgLayer {
   String? path;
-  double scale, dx, dy, rot, skewX, skewY, opacity, blur;
-  ImgLayer({
-    this.path,
-    this.scale = 1,
-    this.dx = 0,
-    this.dy = 0,
-    this.rot = 0,
-    this.skewX = 0,
-    this.skewY = 0,
-    this.opacity = 1,
-    this.blur = 0,
-  });
+  double opacity, blur;
+  bool enabled; // 这一层图片是否启用（关掉后图片还在，只是不显示）
+  final Xf xf;
+  ImgLayer({this.path, this.opacity = 1, this.blur = 0, this.enabled = true, Xf? xf})
+      : xf = xf ?? Xf();
 
   void resetTransform() {
-    scale = 1;
-    dx = 0;
-    dy = 0;
-    rot = 0;
-    skewX = 0;
-    skewY = 0;
+    xf.resetAll();
     opacity = 1;
     blur = 0;
   }
 
-  Map<String, dynamic> toJson() => {
-        'path': path,
-        'scale': _d(scale, 1),
-        'dx': _d(dx, 0),
-        'dy': _d(dy, 0),
-        'rot': _d(rot, 0),
-        'sx': _d(skewX, 0),
-        'sy': _d(skewY, 0),
-        'op': _d(opacity, 1),
-        'blur': _d(blur, 0),
-      };
+  Map<String, dynamic> toJson() {
+    final m = <String, dynamic>{
+      'path': path,
+      'op': _d(opacity, 1),
+      'blur': _d(blur, 0),
+      'en': enabled,
+    };
+    xf.writeBg(m);
+    return m;
+  }
 
-  static ImgLayer fromJson(Map<String, dynamic> j) => ImgLayer(
-        path: j['path'] is String ? j['path'] as String : null,
-        scale: _d(j['scale'], 1),
-        dx: _d(j['dx'], 0),
-        dy: _d(j['dy'], 0),
-        rot: _d(j['rot'], 0),
-        skewX: _d(j['sx'], 0),
-        skewY: _d(j['sy'], 0),
-        opacity: _d(j['op'], 1),
-        blur: _d(j['blur'], 0),
-      );
+  static ImgLayer fromJson(Map<String, dynamic> j) {
+    final l = ImgLayer(
+      path: j['path'] is String ? j['path'] as String : null,
+      opacity: _d(j['op'], 1),
+      blur: _d(j['blur'], 0),
+      enabled: j['en'] != false,
+    );
+    l.xf.readBg(j);
+    return l;
+  }
 }
 
 class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
@@ -244,6 +231,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   /// 头像库里每张头像的编辑数据（裁剪 / 调色 / 涂鸦 / 贴纸…），键是头像文件路径
   final Map<String, Map<String, dynamic>> avatarEdits = <String, Map<String, dynamic>>{};
   final Map<String, AvatarEdit> _editCache = <String, AvatarEdit>{};
+  int layerFrame = 0; // 背景图编辑器里选的手机屏幕外形
   bool gameMusic = true; // 局内音乐小按钮
   int gameMusicPos = 0; // 0 顶栏右侧 1 棋手栏左侧 2 棋手栏右侧
   final Set<String> unlocked = <String>{};
@@ -445,6 +433,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
       });
     }
     layerRev.value++;
+    layerFrame = _i(j['lf'], 0, 40);
     gameMusic = _b(j['gm'], true);
     gameMusicPos = _i(j['gmp'], 0, 2);
     avatarEdits.clear();
@@ -528,6 +517,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'eqc': eqCorner,
         'custom': custom,
         'layers': {for (final e in layers.entries) e.key: e.value.toJson()},
+        'lf': layerFrame,
         'gm': gameMusic,
         'gmp': gameMusicPos,
         'aedits': avatarEdits,

@@ -8,6 +8,7 @@ import 'engine.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'img_util.dart';
+import 'xform.dart';
 import 'liquid.dart';
 import 'festival.dart';
 
@@ -430,7 +431,8 @@ class ActionBar extends StatelessWidget {
 class ImageSlot extends StatelessWidget {
   final String slot;
   final bool clip; // false：不裁掉屏幕外的部分（背景编辑器里用来显示框外的图）
-  const ImageSlot({super.key, required this.slot, this.clip = true});
+  final bool force; // true：即使这一层被关掉也显示（编辑器里用）
+  const ImageSlot({super.key, required this.slot, this.clip = true, this.force = false});
 
   @override
   Widget build(BuildContext context) {
@@ -444,28 +446,22 @@ class ImageSlot extends StatelessWidget {
     final l = app.layers[slot];
     final p = l?.path;
     if (l == null || p == null) return const SizedBox.shrink();
+    if (!l.enabled && !force) return const SizedBox.shrink();
     if (!File(p).existsSync()) return const SizedBox.shrink();
     return IgnorePointer(
       child: RepaintBoundary(
         child: LayoutBuilder(
           builder: (context, c) {
             final w = c.maxWidth, h = c.maxHeight;
-            final co = cos(l.rot * pi / 180), si = sin(l.rot * pi / 180);
-            final a11 = l.scale * (co - si * l.skewY);
-            final a12 = l.scale * (co * l.skewX - si);
-            final a21 = l.scale * (si + co * l.skewY);
-            final a22 = l.scale * (si * l.skewX + co);
             Widget img = imageFileWidget(p,
                 fit: BoxFit.contain, width: w, height: h, cacheWidth: 2048);
             if (l.blur > 0.1) {
               img = ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: l.blur, sigmaY: l.blur), child: img);
             }
-            final m = Matrix4(
-                a11, a21, 0, 0, a12, a22, 0, 0, 0, 0, 1, 0, l.dx * w, l.dy * h, 0, 1);
             final Widget body = Opacity(
               opacity: l.opacity.clamp(0.0, 1.0).toDouble(),
-              child: Transform(alignment: Alignment.center, transform: m, child: img),
+              child: Transform(transform: xfMatrix(l.xf, Size(w, h)), child: img),
             );
             return clip ? ClipRect(child: body) : body;
           },

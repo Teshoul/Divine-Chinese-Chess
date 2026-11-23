@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
+import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,6 +13,7 @@ import 'img_util.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
+import 'xform.dart';
 
 /// 头像库里每个头像格子的 key（飞行动画要找到它的落点）
 final Map<String, GlobalKey> avatarTileKeys = <String, GlobalKey>{};
@@ -54,7 +56,7 @@ class AvatarEditorPage extends StatefulWidget {
   State<AvatarEditorPage> createState() => _AvatarEditorPageState();
 }
 
-class _AvatarEditorPageState extends State<AvatarEditorPage> {
+class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerProviderStateMixin {
   AvatarEdit edit = AvatarEdit();
   final List<String> _undo = <String>[];
   int tool = 0; // 0 裁剪 1 调色 2 涂鸦 3 图形 4 贴纸 5 文字
@@ -72,6 +74,29 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
   AvatarStroke? _cur;
   int _ptrs = 0;
   double _z0 = 1, _r0 = 0;
+  bool _warp = false; // 显示四角变形手柄
+  final XfDrag _xd = XfDrag();
+
+  // 放大到全屏编辑
+  late final AnimationController _fc = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 440),
+    reverseDuration: const Duration(milliseconds: 360),
+  );
+  final ValueNotifier<int> _fullRev = ValueNotifier<int>(0);
+  final GlobalKey _areaKey = GlobalKey();
+  OverlayEntry? _fullEntry;
+  bool _full = false;
+  bool _setOpen = false;
+  Rect? _fromArea;
+  double _fromS = 220;
+  double _curS = 220;
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    if (_full) _fullRev.value++;
+  }
 
   static const List<IconData> _toolIcons = [
     Icons.crop_rotate,
@@ -93,12 +118,18 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
       setState(() {
         _cover = cover;
         edit.zoom = cover;
+        edit.xf.ar = ar;
       });
     });
   }
 
   @override
   void dispose() {
+    try {
+      _fullEntry?.remove();
+    } catch (_) {}
+    _fc.dispose();
+    _fullRev.dispose();
     if (!_confirmed) {
       for (final t in _tmp) {
         try {
@@ -127,10 +158,11 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
 
   // ───────────── 手势 ─────────────
 
-  Offset _norm(Offset p, double m, double s) => Offset((p.dx - m) / s, (p.dy - m) / s);
+  // fp：相对头像框左上角的坐标
+  Offset _norm(Offset fp, double s) => fp / s;
 
-  int? _hit(Offset p, double m, double s) {
-    final q = _norm(p, m, s);
+  int? _hit(Offset fp, double s) {
+    final q = _norm(fp, s);
     for (var i = edit.items.length - 1; i >= 0; i--) {
       final it = edit.items[i];
       final sz = 0.26 * it.scale;
@@ -145,36 +177,54 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
     return null;
   }
 
-  void _down(Offset p, double m, double s) {
+  void _down(Offset p, Offset o, double s) {
     _ptrs++;
     if (_ptrs != 1) return;
-    if (tool == 2) {
+    final fp = p - o;
+    if (tool == 0) {
+      final before = jsonEncode(edit.toJson());
+      if (_xd.begin(edit.xf, Size(s, s), fp, _warp)) {
+        _undo.add(before);
+        setState(() {});
+      }
+    } else if (tool == 2) {
       _push();
-      final st = AvatarStroke(penColor, penW, [_norm(p, m, s)]);
+      final st = AvatarStroke(penColor, penW, [_norm(fp, s)]);
       setState(() {
         edit.strokes.add(st);
         _cur = st;
       });
     } else if (tool >= 3) {
-      final i = _hit(p, m, s);
+      final i = _hit(fp, s);
       if (i != sel) setState(() => sel = i);
     }
   }
 
-  void _move(Offset p, double m, double s) {
+  void _move(Offset p, Offset o, double s) {
+    final fp = p - o;
+    if (_xd.active) {
+      setState(() => _xd.update(edit.xf, Size(s, s), fp, _warp));
+      return;
+    }
     final st = _cur;
     if (tool == 2 && st != null && _ptrs == 1) {
-      final o = _norm(p, m, s);
-      if ((o - st.pts.last).distance * s > 1.5) setState(() => st.pts.add(o));
+      final n = _norm(fp, s);
+      if ((n - st.pts.last).distance * s > 1.5) setState(() => st.pts.add(n));
     }
   }
 
   void _up() {
     if (_ptrs > 0) _ptrs--;
-    if (_ptrs == 0 && _cur != null) setState(() => _cur = null);
+    if (_ptrs == 0 && (_cur != null || _xd.active)) {
+      setState(() {
+        _cur = null;
+        _xd.end();
+      });
+    }
   }
 
   void _scaleStart(ScaleStartDetails d) {
+    if (_xd.active) return;
     if (tool == 0) {
       if (_ptrs <= 1) _push();
       _z0 = edit.zoom;
@@ -188,12 +238,13 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
   }
 
   void _scaleUpdate(ScaleUpdateDetails d, double s) {
+    if (_xd.active) return;
     if (tool == 0) {
       setState(() {
         edit.ox += d.focalPointDelta.dx / s;
         edit.oy += d.focalPointDelta.dy / s;
         if (d.pointerCount >= 2) {
-          edit.zoom = (_z0 * d.scale).clamp(0.2, 12.0).toDouble();
+          edit.zoom = (_z0 * d.scale).clamp(0.05, 20.0).toDouble();
           edit.rot = _wrap180(_r0 + d.rotation * 180 / pi);
         }
       });
@@ -363,20 +414,21 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
 
   // ───────────── 界面小件 ─────────────
 
-  Widget _sl(String label, double v, double lo, double hi, void Function(double) set) {
-    return Row(
-      children: [
-        SizedBox(width: 58, child: Text(tr(label), style: const TextStyle(fontSize: 13))),
-        Expanded(
-          child: Slider(
-            value: v.clamp(lo, hi).toDouble(),
-            min: lo,
-            max: hi,
-            onChangeStart: (_) => _push(),
-            onChanged: (x) => setState(() => set(x)),
-          ),
-        ),
-      ],
+  /// 滑块 + 数值框：滑块拖着快，数值框可以直接输入精确的数
+  Widget _sl(String label, double v, double lo, double hi, void Function(double) set,
+      {double mul = 1, int dec = 0, String suf = '', double? nMin, double? nMax}) {
+    return NumRow(
+      label: tr(label),
+      raw: v,
+      sMin: lo,
+      sMax: hi,
+      nMin: nMin ?? lo,
+      nMax: nMax ?? hi,
+      mul: mul,
+      decimals: dec,
+      suffix: suf,
+      onStart: _push,
+      onChanged: (x) => setState(() => set(x)),
     );
   }
 
@@ -490,14 +542,75 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
 
   // ───────────── 各工具的面板 ─────────────
 
+  Widget _cornerBox(String label, int i) {
+    return SizedBox(
+      width: 150,
+      child: Row(
+        children: [
+          SizedBox(width: 52, child: Text(tr(label), style: const TextStyle(fontSize: 12))),
+          NumBox(
+            width: 92,
+            value: edit.xf.p[i] * 100,
+            min: -300,
+            max: 300,
+            decimals: 1,
+            suffix: '%',
+            onChanged: (v) {
+              _push();
+              setState(() => edit.xf.p[i] = v / 100);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _panelCrop() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _hint('单指拖动图片，双指缩放 / 旋转；框外的部分会半透明显示出来'),
-        _sl('缩放', edit.zoom, 0.2, 8, (v) => edit.zoom = v),
-        _sl('旋转', edit.rot, -180, 180, (v) => edit.rot = v),
+        _hint('单指拖动图片，双指缩放 / 旋转；拖动高亮框上的圆点缩放，方块拉宽 / 拉高，圆环旋转。框外的部分会半透明显示'),
+        LitToggle(
+          wide: true,
+          icon: Icons.grid_on,
+          label: tr('变形（四角透视）'),
+          value: _warp,
+          onChanged: (v) => setState(() => _warp = v),
+        ),
         const SizedBox(height: 6),
+        _sl('缩放', edit.zoom, 0.2, 8, (v) => edit.zoom = v,
+            mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+        _sl('宽度', edit.xf.sx, 0.2, 4, (v) => edit.xf.sx = v,
+            mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+        _sl('高度', edit.xf.sy, 0.2, 4, (v) => edit.xf.sy = v,
+            mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+        _sl('水平位置', edit.ox, -1.5, 1.5, (v) => edit.ox = v,
+            mul: 100, suf: '%', nMin: -10, nMax: 10),
+        _sl('垂直位置', edit.oy, -1.5, 1.5, (v) => edit.oy = v,
+            mul: 100, suf: '%', nMin: -10, nMax: 10),
+        _sl('旋转', edit.rot, -180, 180, (v) => edit.rot = v, suf: '°', dec: 1),
+        _sl('水平倾斜', edit.xf.skewX, -0.8, 0.8, (v) => edit.xf.skewX = v,
+            mul: 100, suf: '%', nMin: -3, nMax: 3),
+        _sl('垂直倾斜', edit.xf.skewY, -0.8, 0.8, (v) => edit.xf.skewY = v,
+            mul: 100, suf: '%', nMin: -3, nMax: 3),
+        if (_warp) ...[
+          _title('四个角的位置偏移（占图片宽 / 高）'),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _cornerBox('左上 X', 0),
+              _cornerBox('左上 Y', 1),
+              _cornerBox('右上 X', 2),
+              _cornerBox('右上 Y', 3),
+              _cornerBox('右下 X', 4),
+              _cornerBox('右下 Y', 5),
+              _cornerBox('左下 X', 6),
+              _cornerBox('左下 Y', 7),
+            ],
+          ),
+        ],
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -526,14 +639,15 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
               _push();
               setState(() => edit.rot = _wrap180(edit.rot + 90));
             }),
+            _btn(Icons.grid_off, '重置变形', () {
+              _push();
+              setState(() => edit.xf.resetWarp());
+            }),
             _btn(Icons.restart_alt, '重置', () {
               _push();
               setState(() {
+                edit.xf.resetAll();
                 edit.zoom = _cover;
-                edit.ox = 0;
-                edit.oy = 0;
-                edit.rot = 0;
-                edit.flipX = false;
               });
             }),
           ],
@@ -547,10 +661,10 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sl('饱和度', edit.sat, 0, 2, (v) => edit.sat = v),
-        _sl('亮度', edit.bri, -0.5, 0.5, (v) => edit.bri = v),
-        _sl('对比度', edit.con, 0.5, 1.5, (v) => edit.con = v),
-        _sl('色相', edit.hue, -180, 180, (v) => edit.hue = v),
+        _sl('饱和度', edit.sat, 0, 2, (v) => edit.sat = v, mul: 100, suf: '%', nMin: 0, nMax: 3),
+        _sl('亮度', edit.bri, -0.5, 0.5, (v) => edit.bri = v, mul: 100, suf: '%', nMin: -1, nMax: 1),
+        _sl('对比度', edit.con, 0.5, 1.5, (v) => edit.con = v, mul: 100, suf: '%', nMin: 0, nMax: 3),
+        _sl('色相', edit.hue, -180, 180, (v) => edit.hue = v, suf: '°'),
         _title('滤镜'),
         Wrap(
           spacing: 8,
@@ -600,7 +714,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
         _hint('在头像上直接用手指涂画'),
         _colors(penColor, (c) => setState(() => penColor = c)),
         const SizedBox(height: 4),
-        _sl('笔粗', penW, 0.008, 0.09, (v) => penW = v),
+        _sl('笔粗', penW, 0.008, 0.09, (v) => penW = v, mul: 100, dec: 1, suf: '%', nMin: 0.2, nMax: 30),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -632,8 +746,10 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _title('已选中'),
-        _sl('大小', it.scale, 0.2, 6, (v) => it.scale = v),
-        _sl('旋转', it.rot, -180, 180, (v) => it.rot = v),
+        _sl('大小', it.scale, 0.2, 6, (v) => it.scale = v, mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+        _sl('旋转', it.rot, -180, 180, (v) => it.rot = v, suf: '°', dec: 1),
+        _sl('水平位置', it.x, -0.3, 1.3, (v) => it.x = v, mul: 100, suf: '%', dec: 1, nMin: -2, nMax: 3),
+        _sl('垂直位置', it.y, -0.3, 1.3, (v) => it.y = v, mul: 100, suf: '%', dec: 1, nMin: -2, nMax: 3),
         Wrap(
           spacing: 8,
           runSpacing: 8,
@@ -765,24 +881,46 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
     }
   }
 
-  Widget _canvas(double pa, double s) {
+  Widget _roundBtn(IconData icon, VoidCallback? onTap, {bool on = false, double size = 38}) {
     final cs = Theme.of(context).colorScheme;
-    final m = (pa - s) / 2;
-    return SizedBox(
-      width: pa,
-      height: pa,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: Listener(
+    final fg = on
+        ? (app.primary.computeLuminance() > 0.5 ? Colors.black87 : Colors.white)
+        : cs.onSurface;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: on ? app.primary : cs.surface.withOpacity(0.78),
+          border: Border.all(color: cs.outline.withOpacity(0.5)),
+        ),
+        child: Icon(icon, size: size * 0.52, color: onTap == null ? cs.outline : fg),
+      ),
+    );
+  }
+
+  /// 画布：area 是整块可操作区域，头像框居中，边长 s
+  Widget _canvas(Size area, double s, {double radius = 16}) {
+    final cs = Theme.of(context).colorScheme;
+    final o = Offset((area.width - s) / 2, (area.height - s) / 2);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (e) => _down(e.localPosition, o, s),
+        onPointerMove: (e) => _move(e.localPosition, o, s),
+        onPointerUp: (e) => _up(),
+        onPointerCancel: (e) => _up(),
+        child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onPointerDown: (e) => _down(e.localPosition, m, s),
-          onPointerMove: (e) => _move(e.localPosition, m, s),
-          onPointerUp: (e) => _up(),
-          onPointerCancel: (e) => _up(),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onScaleStart: _scaleStart,
-            onScaleUpdate: (d) => _scaleUpdate(d, s),
+          onScaleStart: _scaleStart,
+          onScaleUpdate: (d) => _scaleUpdate(d, s),
+          child: SizedBox(
+            width: area.width,
+            height: area.height,
             child: Stack(
               alignment: Alignment.center,
               children: [
@@ -812,6 +950,16 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
                     ),
                   ),
                 ),
+                if (tool == 0)
+                  IgnorePointer(
+                    child: SizedBox(
+                      width: s,
+                      height: s,
+                      child: CustomPaint(
+                        painter: XfPainter(edit.xf, _warp, _xd.h, _xd),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -820,13 +968,190 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
     );
   }
 
+  // ───────────── 放大到全屏 ─────────────
+
+  void _openFull() {
+    if (_full || _busy) return;
+    final r = globalRectOf(_areaKey);
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (r == null || overlay == null) return;
+    _fromArea = r;
+    _fromS = _curS;
+    _setOpen = false;
+    setState(() => _full = true);
+    _fullEntry = OverlayEntry(builder: _fullBuilder);
+    overlay.insert(_fullEntry!);
+    _fc.forward(from: 0);
+  }
+
+  Future<void> _closeFull() async {
+    if (!_full || _fc.status == AnimationStatus.reverse) return;
+    _setOpen = false;
+    _fullRev.value++;
+    await _fc.reverse();
+    try {
+      _fullEntry?.remove();
+    } catch (_) {}
+    _fullEntry = null;
+    if (mounted) setState(() => _full = false);
+  }
+
+  void _stripTap(int i) {
+    // 第一次点：切到这个功能；再点一次：展开它的设置
+    if (tool != i) {
+      tool = i;
+      if (i < 3) sel = null;
+      _setOpen = false;
+    } else {
+      _setOpen = !_setOpen;
+    }
+    setState(() {});
+  }
+
+  Widget _fullBuilder(BuildContext octx) {
+    return AnimatedBuilder(
+      animation: Listenable.merge(<Listenable>[_fc, _fullRev]),
+      builder: (context, _) {
+        final mq = MediaQuery.of(context);
+        final size = mq.size;
+        final cs = Theme.of(context).colorScheme;
+        final t = Curves.easeInOutCubic.transform(_fc.value);
+        final topBar = mq.padding.top + 52;
+        final full = Rect.fromLTRB(0, topBar, size.width, size.height - mq.padding.bottom);
+        final from = _fromArea ?? full;
+        final area = Rect.lerp(from, full, t)!;
+        final sFull = max(120.0, min(full.width - 72, full.height - 24) * 0.96);
+        final s = lerpDouble(_fromS, sFull, t)!;
+        final radius = lerpDouble(16, 0, t)!;
+        final cardMax = size.height * 0.46;
+        final stripH = _toolNames.length * 46.0 + 8 + 46 + 4;
+        return Material(
+          type: MaterialType.transparency,
+          child: Stack(
+            children: [
+              Positioned.fill(child: ColoredBox(color: cs.surface.withOpacity(t))),
+              Positioned.fromRect(rect: area, child: _canvas(area.size, s, radius: radius)),
+              // 顶栏
+              Positioned(
+                left: 8,
+                right: 8,
+                top: mq.padding.top,
+                height: 52,
+                child: Opacity(
+                  opacity: t,
+                  child: Row(
+                    children: [
+                      _roundBtn(Icons.fullscreen_exit, _closeFull),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(tr(_toolNames[tool]),
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                      ),
+                      _roundBtn(Icons.undo, _undo.isEmpty ? null : _doUndo),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: _closeFull,
+                        style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            minimumSize: const Size(0, 38)),
+                        child: Text(tr('完成')),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // 右边：小图标列表，点一下选中，再点一下展开设置
+              Positioned(
+                right: 8,
+                top: topBar + max(0.0, (full.height - stripH) / 2 - 16),
+                child: Opacity(
+                  opacity: t,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: cs.surface.withOpacity(0.82),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: cs.outline.withOpacity(0.4)),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < _toolNames.length; i++)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: _roundBtn(_toolIcons[i], () => _stripTap(i),
+                                on: tool == i, size: 40),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // 设置面板：从底部升起
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.easeOutCubic,
+                left: 8,
+                right: 64,
+                bottom: _setOpen ? mq.viewInsets.bottom + mq.padding.bottom + 8 : -size.height * 0.6,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: cardMax),
+                  child: Material(
+                    color: cs.surfaceContainerHigh.withOpacity(0.97),
+                    elevation: 8,
+                    borderRadius: BorderRadius.circular(18),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                          child: Row(
+                            children: [
+                              Icon(_toolIcons[tool], size: 18, color: app.primary),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(tr(_toolNames[tool]),
+                                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () {
+                                  _setOpen = false;
+                                  setState(() {});
+                                },
+                                icon: const Icon(Icons.keyboard_arrow_down),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                            child: _panel(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return LayoutBuilder(builder: (context, cons) {
       final w = cons.maxWidth;
       final h = cons.maxHeight;
       final pa = max(160.0, min(w - 24, (h - 52 - 8 - 8 - 44) * 0.55));
       final s = pa * 0.8;
+      _curS = s;
       return Column(
         children: [
           // 这一行的左边留给左上角的返回按钮，它始终不动
@@ -860,7 +1185,29 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> {
             ),
           ),
           const SizedBox(height: 8),
-          _canvas(pa, s),
+          SizedBox(
+            key: _areaKey,
+            width: pa,
+            height: pa,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: _full
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: ColoredBox(color: cs.surfaceContainerHighest),
+                        )
+                      : _canvas(Size(pa, pa), s),
+                ),
+                if (!_full)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: _roundBtn(Icons.fullscreen, _openFull, size: 34),
+                  ),
+              ],
+            ),
+          ),
           const SizedBox(height: 8),
           SizedBox(
             height: 44,

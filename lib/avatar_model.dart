@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'xform.dart';
 
 /// 头像编辑数据：不改动原图文件，所有裁剪 / 调色 / 涂鸦 / 贴纸都以数据形式保存，
 /// 显示时实时叠加，所以 GIF / WebP 动图依旧会正常播放。
@@ -83,11 +84,19 @@ class AvatarItem {
 const List<String> kAvatarFilters = ['原图', '黑白', '复古', '暖色', '冷色', '鲜艳', '褪色'];
 
 class AvatarEdit {
-  // 裁剪：图片放进正方形框里的位置
-  double zoom; // 相对“完整显示整张图”的倍数
-  double ox, oy; // 平移，占头像边长的比例
-  double rot; // 旋转角度
-  bool flipX;
+  /// 底图的变换：缩放 / 拉宽拉高 / 旋转 / 倾斜 / 位移 / 四角透视
+  final Xf xf;
+  // 下面这几个是 xf 的别名，编辑页里一直在用
+  double get zoom => xf.scale; // 相对“完整显示整张图”的倍数
+  set zoom(double v) => xf.scale = v;
+  double get ox => xf.dx; // 平移，占头像边长的比例
+  set ox(double v) => xf.dx = v;
+  double get oy => xf.dy;
+  set oy(double v) => xf.dy = v;
+  double get rot => xf.rot; // 旋转角度
+  set rot(double v) => xf.rot = v;
+  bool get flipX => xf.flipX;
+  set flipX(bool v) => xf.flipX = v;
   // 调色
   double sat; // 饱和度 0~2
   double bri; // 亮度 -0.5~0.5
@@ -99,11 +108,7 @@ class AvatarEdit {
   String? snap; // 编辑完成时拍下的静态图（联机时发给对手用）
 
   AvatarEdit({
-    this.zoom = 1,
-    this.ox = 0,
-    this.oy = 0,
-    this.rot = 0,
-    this.flipX = false,
+    Xf? xf,
     this.sat = 1,
     this.bri = 0,
     this.con = 1,
@@ -112,24 +117,34 @@ class AvatarEdit {
     List<AvatarStroke>? strokes,
     List<AvatarItem>? items,
     this.snap,
-  })  : strokes = strokes ?? <AvatarStroke>[],
+  })  : xf = xf ?? Xf(),
+        strokes = strokes ?? <AvatarStroke>[],
         items = items ?? <AvatarItem>[];
 
-  Map<String, dynamic> toJson() => {
-        'z': _r4(zoom),
-        'ox': _r4(ox),
-        'oy': _r4(oy),
-        'r': _r4(rot),
-        'fx': flipX,
-        'sat': _r4(sat),
-        'bri': _r4(bri),
-        'con': _r4(con),
-        'hue': _r4(hue),
-        'flt': filter,
-        'st': [for (final s in strokes) s.toJson()],
-        'it': [for (final i in items) i.toJson()],
-        'snap': snap,
-      };
+  Map<String, dynamic> toJson() {
+    final m = <String, dynamic>{
+      'z': _r4(zoom),
+      'ox': _r4(ox),
+      'oy': _r4(oy),
+      'r': _r4(rot),
+      'fx': flipX,
+      'stx': _r4(xf.sx),
+      'sty': _r4(xf.sy),
+      'skx': _r4(xf.skewX),
+      'sky': _r4(xf.skewY),
+      'pp': [for (final v in xf.p) _r4(v)],
+      'ar': _r4(xf.ar),
+      'sat': _r4(sat),
+      'bri': _r4(bri),
+      'con': _r4(con),
+      'hue': _r4(hue),
+      'flt': filter,
+      'st': [for (final s in strokes) s.toJson()],
+      'it': [for (final i in items) i.toJson()],
+      'snap': snap,
+    };
+    return m;
+  }
 
   static AvatarEdit fromJson(Map<String, dynamic> j) {
     final st = <AvatarStroke>[];
@@ -146,12 +161,24 @@ class AvatarEdit {
         if (e is Map) it.add(AvatarItem.fromJson(Map<String, dynamic>.from(e)));
       }
     }
-    return AvatarEdit(
-      zoom: _f(j['z'], 1).clamp(0.05, 20.0).toDouble(),
-      ox: _f(j['ox'], 0),
-      oy: _f(j['oy'], 0),
+    final x = Xf(
+      scale: _f(j['z'], 1).clamp(0.05, 20.0).toDouble(),
+      dx: _f(j['ox'], 0),
+      dy: _f(j['oy'], 0),
       rot: _f(j['r'], 0),
       flipX: j['fx'] == true,
+      sx: _f(j['stx'], 1),
+      sy: _f(j['sty'], 1),
+      skewX: _f(j['skx'], 0),
+      skewY: _f(j['sky'], 0),
+      ar: _f(j['ar'], 0),
+    );
+    final pp = j['pp'];
+    for (var i = 0; i < 8; i++) {
+      x.p[i] = (pp is List && i < pp.length) ? _f(pp[i], 0) : 0;
+    }
+    return AvatarEdit(
+      xf: x,
       sat: _f(j['sat'], 1),
       bri: _f(j['bri'], 0),
       con: _f(j['con'], 1),
@@ -176,13 +203,8 @@ class AvatarEdit {
     return out;
   }
 
-  /// 图片本身的变换：先平移，再旋转，最后缩放 / 翻转（都以框中心为基准）
-  Matrix4 baseMatrix(double s) {
-    return Matrix4.identity()
-      ..translate(ox * s, oy * s, 0.0)
-      ..rotateZ(rot * pi / 180)
-      ..scale(flipX ? -zoom : zoom, zoom, 1.0);
-  }
+  /// 底图的完整变换矩阵（坐标原点是头像框左上角）
+  Matrix4 baseMatrix(double s) => xfMatrix(xf, Size(s, s));
 
   bool get hasColorFx =>
       filter != 0 ||

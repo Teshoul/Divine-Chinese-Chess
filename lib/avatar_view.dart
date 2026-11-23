@@ -30,7 +30,7 @@ class AvatarView extends StatelessWidget {
       height: s,
       child: imageFileWidget(path, fit: BoxFit.contain, width: s, height: s, cacheWidth: cache),
     );
-    w = Transform(alignment: Alignment.center, transform: edit.baseMatrix(s), child: w);
+    w = Transform(transform: edit.baseMatrix(s), child: w);
     final cf = edit.colorFilter();
     if (cf != null) w = ColorFiltered(colorFilter: cf, child: w);
     return w;
