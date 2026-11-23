@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:ui' show ImageFilter, lerpDouble;
 import 'package:flutter/material.dart';
 import 'avatar_drawer.dart';
+import 'avatar_view.dart';
 import 'fly.dart';
 import 'glitch.dart';
 import 'items.dart';
@@ -35,7 +36,7 @@ class AvatarBox extends StatelessWidget {
         final Widget inner = isStar
             ? const StarAvatarFill()
             : (f != null
-                ? Image.file(f, fit: BoxFit.cover, cacheWidth: 300, gaplessPlayback: true)
+                ? AvatarImage(path: f.path, cache: 300)
                 : Center(child: Icon(Icons.person, size: size * 0.6, color: cs.onSurfaceVariant)));
         final box = Container(
           width: size,
@@ -89,12 +90,24 @@ class AvatarBox extends StatelessWidget {
   }
 }
 
-/// 个人资料层：头像按钮始终在最上面。
+/// 个人资料层：头像按钮始终在最上面（左上角，任何动画里它都不会动）。
 /// 点开时：头像方块先极快向右拉宽 → 略微停顿 → 极快向下拉长 → 内容渐显，Q 弹地变成 X；关闭是倒放。
+/// 上传头像后：个人主页整体向左滑出，右边同步滑进“编辑头像”页；确定后再一起滑回去。
 class ProfileLayer extends StatelessWidget {
   final Animation<double> anim;
+  final Animation<double> editAnim;
   final VoidCallback onToggle;
-  const ProfileLayer({super.key, required this.anim, required this.onToggle});
+  final Widget? editor;
+  const ProfileLayer({
+    super.key,
+    required this.anim,
+    required this.editAnim,
+    required this.onToggle,
+    this.editor,
+  });
+
+  /// 左上角按钮占的那一行高度 + 一点空白，内容从这下面开始，不会被按钮挡住
+  static const double kTopInset = 52 + 18;
 
   Rect _stageRect(double u, Rect o, Rect t, double screenW) {
     double eb(double x) => Curves.easeOutBack.transform(x.clamp(0.0, 1.0));
@@ -112,28 +125,31 @@ class ProfileLayer extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final top = mq.padding.top + 12;
     final origin = Rect.fromLTWH(16, top, 52, 52);
-    final ty = top + 52 + 14;
-    final th = min(size.height - ty - mq.padding.bottom - 20, 720.0);
+    final th = min(size.height - top - mq.padding.bottom - 20, 780.0);
     final tw = size.width - 32;
-    final target = Rect.fromLTWH(16, ty, tw, th);
+    final target = Rect.fromLTWH(16, top, tw, th);
 
     return Stack(
       fit: StackFit.expand,
       children: [
         AnimatedBuilder(
-          animation: anim,
+          animation: Listenable.merge(<Listenable>[anim, editAnim]),
           builder: (context, _) {
             final u = anim.value;
             if (u == 0) return const SizedBox.shrink();
-            final rect = _stageRect(u, Rect.fromLTWH(16, top, 52, 52), target, size.width);
+            final e = Curves.easeInOutCubic.transform(editAnim.value);
+            final shift = size.width * e;
+            final rect =
+                _stageRect(u, origin, target, size.width).shift(Offset(-shift, 0));
             final dim = Curves.easeOut.transform(((u - 0.2) / 0.8).clamp(0.0, 1.0));
             final content = Curves.easeOut.transform(((u - 0.55) / 0.45).clamp(0.0, 1.0));
             final radius = lerpDouble(10, app.cardR + 6, Curves.easeOut.transform((u / 0.5).clamp(0.0, 1.0)))!;
+            final editing = editAnim.value > 0;
             return Stack(
               fit: StackFit.expand,
               children: [
                 GestureDetector(
-                  onTap: onToggle,
+                  onTap: editing ? null : onToggle,
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 0.01 + 14 * dim, sigmaY: 0.01 + 14 * dim),
                     child: ColoredBox(color: Colors.black.withOpacity(0.35 * dim)),
@@ -159,13 +175,26 @@ class ProfileLayer extends StatelessWidget {
                                 maxWidth: tw,
                                 minHeight: th,
                                 maxHeight: th,
-                                child: const ProfileContent(),
+                                child: const ProfileContent(topInset: kTopInset),
                               ),
                             )
                           : const SizedBox.shrink(),
                     ),
                   ),
                 ),
+                if (editor != null && e > 0)
+                  Positioned.fromRect(
+                    rect: Rect.fromLTWH(16 + size.width - shift, top, tw, th),
+                    child: Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: app.divine
+                          ? divineDecoration(app.cardR + 6, false)
+                          : BoxDecoration(
+                              color: cs.surfaceContainerHigh,
+                              borderRadius: BorderRadius.circular(app.cardR + 6)),
+                      child: Material(type: MaterialType.transparency, child: editor),
+                    ),
+                  ),
               ],
             );
           },
@@ -200,7 +229,8 @@ String birthdayText(String iso) {
 }
 
 class ProfileContent extends StatefulWidget {
-  const ProfileContent({super.key});
+  final double topInset;
+  const ProfileContent({super.key, this.topInset = 0});
   @override
   State<ProfileContent> createState() => _ProfileContentState();
 }
@@ -503,7 +533,7 @@ class _ProfileContentState extends State<ProfileContent> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      padding: EdgeInsets.fromLTRB(20, widget.topInset + 6, 20, 24),
       children: [
         Row(
           children: [

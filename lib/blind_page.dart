@@ -11,6 +11,7 @@ import 'peer.dart';
 import 'ai_glue.dart';
 import 'ai_ui.dart';
 import 'enter_fx.dart';
+import 'game_music.dart';
 
 class BlindPage extends StatefulWidget {
   final BlindConfig cfg;
@@ -424,6 +425,7 @@ class _BlindPageState extends State<BlindPage> with TickerProviderStateMixin {
             ),
           ),
         ),
+        InGameMusic(online: online),
       ],
     );
   }

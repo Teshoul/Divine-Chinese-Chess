@@ -7,6 +7,7 @@ import 'decor.dart';
 import 'engine.dart';
 import 'settings.dart';
 import 'strings.dart';
+import 'img_util.dart';
 import 'liquid.dart';
 import 'festival.dart';
 
@@ -423,18 +424,27 @@ class ActionBar extends StatelessWidget {
   }
 }
 
-/// 自定义图片层：缩放、位置、旋转、扭曲、透明度、模糊
+/// 自定义图片层：缩放、位置、旋转、扭曲、透明度、模糊。
+/// 整张图片完整保留（BoxFit.contain），不会按屏幕比例裁剪；
+/// 监听 layerRev，所以拖动 / 换图时所有页面（包括主菜单）立刻跟着变。
 class ImageSlot extends StatelessWidget {
   final String slot;
-  const ImageSlot({super.key, required this.slot});
+  final bool clip; // false：不裁掉屏幕外的部分（背景编辑器里用来显示框外的图）
+  const ImageSlot({super.key, required this.slot, this.clip = true});
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: app.layerRev,
+      builder: (context, _, __) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final l = app.layers[slot];
     final p = l?.path;
     if (l == null || p == null) return const SizedBox.shrink();
-    final file = File(p);
-    if (!file.existsSync()) return const SizedBox.shrink();
+    if (!File(p).existsSync()) return const SizedBox.shrink();
     return IgnorePointer(
       child: RepaintBoundary(
         child: LayoutBuilder(
@@ -445,27 +455,19 @@ class ImageSlot extends StatelessWidget {
             final a12 = l.scale * (co * l.skewX - si);
             final a21 = l.scale * (si + co * l.skewY);
             final a22 = l.scale * (si * l.skewX + co);
-            Widget img = Image.file(
-              file,
-              fit: BoxFit.cover,
-              width: w,
-              height: h,
-              cacheWidth: 1200,
-              gaplessPlayback: true,
-              errorBuilder: (ctx, e, s) => const SizedBox.shrink(),
-            );
+            Widget img = imageFileWidget(p,
+                fit: BoxFit.contain, width: w, height: h, cacheWidth: 2048);
             if (l.blur > 0.1) {
               img = ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: l.blur, sigmaY: l.blur), child: img);
             }
             final m = Matrix4(
                 a11, a21, 0, 0, a12, a22, 0, 0, 0, 0, 1, 0, l.dx * w, l.dy * h, 0, 1);
-            return ClipRect(
-              child: Opacity(
-                opacity: l.opacity,
-                child: Transform(alignment: Alignment.center, transform: m, child: img),
-              ),
+            final Widget body = Opacity(
+              opacity: l.opacity.clamp(0.0, 1.0).toDouble(),
+              child: Transform(alignment: Alignment.center, transform: m, child: img),
             );
+            return clip ? ClipRect(child: body) : body;
           },
         ),
       ),

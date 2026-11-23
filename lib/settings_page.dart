@@ -7,6 +7,7 @@ import 'ui.dart';
 import 'ai_ui.dart';
 import 'sfx.dart';
 import 'extras.dart';
+import 'img_util.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -293,6 +294,36 @@ class SettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
+              _sec(
+                context,
+                '局内音乐',
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    LitToggle(
+                      wide: true,
+                      icon: Icons.music_note,
+                      label: tr('在对局里显示音乐按钮'),
+                      value: app.gameMusic,
+                      onChanged: (v) => app.change(() => app.gameMusic = v),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(tr('按钮位置')),
+                    const SizedBox(height: 8),
+                    _group(
+                        const ['顶栏右侧', '棋手栏左侧', '棋手栏右侧'],
+                        const [Icons.north_east, Icons.west, Icons.east],
+                        app.gameMusicPos,
+                        (i) => app.change(() => app.gameMusicPos = i)),
+                    const SizedBox(height: 8),
+                    Text(
+                      tr('对局中点小按钮播放 / 暂停，点旁边的列表按钮拉出播放列表，可以随时切换你在“音乐”里上传的本地音频。联机对局里“棋手栏右侧”会自动改到左侧，避免挡住对手头像。'),
+                      style: TextStyle(
+                          fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
               const ExtrasSections(),
               _sec(
                 context,
@@ -402,6 +433,12 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
   bool showZones = true;
   double _s0 = 1, _r0 = 0;
 
+  /// 拖动 / 滑块：只刷新背景图层，所有页面每一帧都跟手
+  void _live(VoidCallback f) {
+    app.touchLayer(f);
+    setState(() {});
+  }
+
   Widget _s(String label, double v, double lo, double hi, void Function(double) set) {
     final x = max(lo, min(hi, v));
     return Row(
@@ -412,20 +449,45 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
             value: x,
             min: lo,
             max: hi,
-            onChanged: (nv) => setState(() => set(nv)),
-            onChangeEnd: (_) => app.change(() {}),
+            onChanged: (nv) => _live(() => set(nv)),
           ),
         ),
       ],
     );
   }
 
+  /// 按屏幕比例把整张图“适应屏幕”（完整显示）或“铺满屏幕”（填满，超出的部分保留在屏幕外）
+  Future<void> _fit(bool cover) async {
+    final p = l.path;
+    if (p == null) return;
+    final sz = await imageNaturalSize(p);
+    if (!mounted) return;
+    final scr = MediaQuery.sizeOf(context);
+    var z = 1.0;
+    if (sz != null && sz.width > 0 && sz.height > 0) {
+      final rw = scr.width / sz.width, rh = scr.height / sz.height;
+      final big = max(rw, rh), small = min(rw, rh);
+      z = cover ? big / small : 1.0;
+    }
+    app.touchLayer(() {
+      l.scale = z.clamp(0.1, 6.0).toDouble();
+      l.dx = 0;
+      l.dy = 0;
+      l.rot = 0;
+      l.skewX = 0;
+      l.skewY = 0;
+    });
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final zones = _zones(widget.slot);
-    final pw = min(240.0, MediaQuery.sizeOf(context).width * 0.62);
+    final pw = min(220.0, MediaQuery.sizeOf(context).width * 0.56);
     final ph = pw * 2.05;
+    final m = pw * 0.42; // 屏幕框外面留的一圈，用来显示被挪到屏幕外的那部分图
+    final cw = pw + m * 2, ch = ph + m * 2;
     return Scaffold(
       appBar: AppBar(title: Text(tr(widget.title))),
       body: ListView(
@@ -433,11 +495,12 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
         children: [
           Center(
             child: Container(
-              width: pw,
-              height: ph,
+              width: cw,
+              height: ch,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: cs.outline, width: 2),
+                color: cs.surfaceContainerHighest.withOpacity(0.5),
+                border: Border.all(color: cs.outline.withOpacity(0.6), width: 1.5),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(14),
@@ -447,11 +510,11 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
                     _s0 = l.scale;
                     _r0 = l.rot;
                   },
-                  onScaleUpdate: (d) => setState(() {
-                    l.dx = (l.dx + d.focalPointDelta.dx / pw).clamp(-1.0, 1.0).toDouble();
-                    l.dy = (l.dy + d.focalPointDelta.dy / ph).clamp(-1.0, 1.0).toDouble();
+                  onScaleUpdate: (d) => _live(() {
+                    l.dx = (l.dx + d.focalPointDelta.dx / pw).clamp(-2.0, 2.0).toDouble();
+                    l.dy = (l.dy + d.focalPointDelta.dy / ph).clamp(-2.0, 2.0).toDouble();
                     if (d.pointerCount >= 2) {
-                      l.scale = (_s0 * d.scale).clamp(0.3, 3.0).toDouble();
+                      l.scale = (_s0 * d.scale).clamp(0.1, 6.0).toDouble();
                       var r = _r0 + d.rotation * 180 / pi;
                       while (r > 180) {
                         r -= 360;
@@ -462,22 +525,58 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
                       l.rot = r;
                     }
                   }),
-                  onScaleEnd: (_) => app.change(() {}),
                   child: Stack(
-                    fit: StackFit.expand,
+                    clipBehavior: Clip.none,
                     children: [
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [app.bgTop, app.bgBottom],
+                      // 框外：整张图半透明显示，没有任何部分被裁掉
+                      Positioned(
+                        left: m,
+                        top: m,
+                        width: pw,
+                        height: ph,
+                        child: Opacity(
+                            opacity: 0.35, child: ImageSlot(slot: widget.slot, clip: false)),
+                      ),
+                      // 框内：就是真正在手机屏幕上看到的样子
+                      Positioned(
+                        left: m,
+                        top: m,
+                        width: pw,
+                        height: ph,
+                        child: ClipRect(
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [app.bgTop, app.bgBottom],
+                                  ),
+                                ),
+                              ),
+                              ImageSlot(slot: widget.slot),
+                              if (showZones)
+                                IgnorePointer(child: CustomPaint(painter: _ZonePainter(zones))),
+                            ],
                           ),
                         ),
                       ),
-                      ImageSlot(slot: widget.slot),
-                      if (showZones)
-                        IgnorePointer(child: CustomPaint(painter: _ZonePainter(zones))),
+                      Positioned(
+                        left: m,
+                        top: m,
+                        width: pw,
+                        height: ph,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.white, width: 2),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -492,7 +591,7 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
             textAlign: TextAlign.center,
             style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12),
           ),
-          Text(tr('单指拖动移动，双指缩放 / 旋转'),
+          Text(tr('单指拖动移动，双指缩放 / 旋转；白框是手机屏幕，框外半透明的部分是被挪出屏幕的图片，整张图都会保留'),
               textAlign: TextAlign.center,
               style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
           const SizedBox(height: 12),
@@ -503,24 +602,35 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
             children: [
               FilledButton.icon(
                 onPressed: () async {
-                  final p = await pickImage();
-                  if (p != null) app.change(() => l.path = p);
+                  final p = await pickImageChoose(context);
+                  if (p != null) {
+                    app.change(() => l.path = p);
+                    app.touchLayer(() {});
+                  }
                   if (mounted) setState(() {});
                 },
                 icon: const Icon(Icons.image),
                 label: Text(tr('选择图片')),
               ),
               OutlinedButton(
+                onPressed: l.path == null ? null : () => _fit(false),
+                child: Text(tr('适应屏幕')),
+              ),
+              OutlinedButton(
+                onPressed: l.path == null ? null : () => _fit(true),
+                child: Text(tr('铺满屏幕')),
+              ),
+              OutlinedButton(
                 onPressed: () {
                   app.change(() => l.path = null);
+                  app.touchLayer(() {});
                   setState(() {});
                 },
                 child: Text(tr('移除图片')),
               ),
               OutlinedButton(
                 onPressed: () {
-                  app.change(() => l.resetTransform());
-                  setState(() {});
+                  _live(() => l.resetTransform());
                 },
                 child: Text(tr('重置变换')),
               ),
@@ -535,9 +645,9 @@ class _LayerEditorPageState extends State<LayerEditorPage> {
             ],
           ),
           const SizedBox(height: 12),
-          _s('缩放', l.scale, 0.3, 3.0, (v) => l.scale = v),
-          _s('水平位置', l.dx, -1.0, 1.0, (v) => l.dx = v),
-          _s('垂直位置', l.dy, -1.0, 1.0, (v) => l.dy = v),
+          _s('缩放', l.scale, 0.1, 6.0, (v) => l.scale = v),
+          _s('水平位置', l.dx, -2.0, 2.0, (v) => l.dx = v),
+          _s('垂直位置', l.dy, -2.0, 2.0, (v) => l.dy = v),
           _s('旋转', l.rot, -180.0, 180.0, (v) => l.rot = v),
           _s('水平扭曲', l.skewX, -0.8, 0.8, (v) => l.skewX = v),
           _s('垂直扭曲', l.skewY, -0.8, 0.8, (v) => l.skewY = v),

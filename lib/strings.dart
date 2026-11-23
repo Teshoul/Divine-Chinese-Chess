@@ -1,4 +1,5 @@
 import 'settings.dart';
+import 'strings_more.dart';
 
 const Map<String, List<String>> _t = {
   '象棋': ['Xiangqi', '象棋', 'Сянци'],
@@ -281,7 +282,7 @@ const Map<String, List<String>> _t = {
 String tr(String zh) {
   final l = app.lang;
   if (l == 0) return zh;
-  final v = _t[zh];
+  final v = _t[zh] ?? kMoreStrings[zh];
   return v == null ? zh : v[l - 1];
 }
 

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -18,6 +19,9 @@ import 'ui.dart';
 import 'ai_glue.dart';
 import 'enter_fx.dart';
 import 'ai_ui.dart';
+import 'avatar_drawer.dart';
+import 'avatar_editor.dart';
+import 'avatar_model.dart';
 import 'expand_route.dart';
 import 'fly.dart';
 import 'sfx.dart';
@@ -136,6 +140,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           vsync: this,
           duration: const Duration(milliseconds: 1000),
           reverseDuration: const Duration(milliseconds: 820));
+  // 上传头像后：个人主页左移、编辑页从右侧滑入（0 = 没在编辑，1 = 编辑页完全滑入）
+  late final AnimationController _ec = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+      reverseDuration: const Duration(milliseconds: 480));
+  String? _editPath;
+  bool _editKeep = false;
   late final Ticker _tick = createTicker(_onTick);
   final ValueNotifier<int> _frame = ValueNotifier<int>(0);
 
@@ -158,7 +169,67 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   static const double _gap = 8;
 
   @override
+  void initState() {
+    super.initState();
+    avatarEditRequest.addListener(_onEditReq);
+    _ec.addStatusListener((st) {
+      if (st != AnimationStatus.dismissed) return;
+      final p = _editPath;
+      if (p != null && !_editKeep && !app.avatars.contains(p)) {
+        // 取消编辑：刚上传、没有用上的图片文件一起清掉
+        try {
+          File(p).deleteSync();
+        } catch (_) {}
+      }
+      _editKeep = false;
+      if (mounted && p != null) setState(() => _editPath = null);
+    });
+  }
+
+  void _onEditReq() {
+    final p = avatarEditRequest.value;
+    if (p == null) return;
+    avatarEditRequest.value = null;
+    if (!mounted || _editPath != null || !open) {
+      try {
+        File(p).deleteSync();
+      } catch (_) {}
+      return;
+    }
+    _editKeep = false;
+    setState(() => _editPath = p);
+    _ec.forward(from: 0);
+  }
+
+  void _cancelEdit() {
+    if (_editPath == null || _ec.status == AnimationStatus.reverse) return;
+    _ec.reverse();
+  }
+
+  /// 点“确定上传”：编辑页滑出、个人主页滑回，同时编辑好的头像沿抛物线飞进头像库
+  void _finishEdit(String path, AvatarEdit edit, Rect from) {
+    if (_editKeep) return;
+    _editKeep = true;
+    app.touchAvatar(() {
+      if (!app.avatars.contains(path)) app.avatars.add(path);
+      app.setAvatarEdit(path, edit);
+      app.avatar = path;
+    });
+    avatarInFlight.value = path;
+    _ec.reverse();
+    flyArc(
+      context,
+      from: from,
+      to: () => globalRectOf(avatarTileKey(path)),
+      child: avatarThumb(path, size: from.width),
+      onDone: () => avatarInFlight.value = null,
+    );
+  }
+
+  @override
   void dispose() {
+    avatarEditRequest.removeListener(_onEditReq);
+    _ec.dispose();
     _tick.dispose();
     _in.dispose();
     _pc.dispose();
@@ -263,6 +334,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   void _toggleProfile() {
+    // 正在编辑头像时，左上角的按钮是“返回”：先退出编辑页，不关个人主页
+    if (_editPath != null) {
+      Sfx.I.click();
+      _cancelEdit();
+      return;
+    }
     Sfx.I.click();
     setState(() => open = !open);
     if (open) {
@@ -549,7 +626,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
-                ProfileLayer(anim: _pc, onToggle: _toggleProfile),
+                ProfileLayer(
+                  anim: _pc,
+                  editAnim: _ec,
+                  onToggle: _toggleProfile,
+                  editor: _editPath == null
+                      ? null
+                      : AvatarEditorPage(
+                          key: ValueKey<String>(_editPath!),
+                          path: _editPath!,
+                          onCancel: _cancelEdit,
+                          onDone: _finishEdit,
+                        ),
+                ),
               ],
             ),
           ),

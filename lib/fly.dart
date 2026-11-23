@@ -105,3 +105,107 @@ class _FlyState extends State<_Fly> with SingleTickerProviderStateMixin {
     );
   }
 }
+
+/// 抛物线飞行：从 from 飞向 to()（目标位置每一帧重新读取，目标在移动 / 滚动也能追上）。
+/// 轨迹是一条向上拱起的抛物线，起飞慢、落地稳，飞行中略微放大。
+void flyArc(
+  BuildContext context, {
+  required Rect from,
+  required Rect? Function() to,
+  required Widget child,
+  Duration duration = const Duration(milliseconds: 820),
+  double lift = 130,
+  VoidCallback? onDone,
+}) {
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) {
+    onDone?.call();
+    return;
+  }
+  late OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (_) => _FlyArc(
+      from: from,
+      to: to,
+      duration: duration,
+      lift: lift,
+      onEnd: () {
+        entry.remove();
+        onDone?.call();
+      },
+      child: child,
+    ),
+  );
+  overlay.insert(entry);
+}
+
+class _FlyArc extends StatefulWidget {
+  final Rect from;
+  final Rect? Function() to;
+  final Duration duration;
+  final double lift;
+  final VoidCallback onEnd;
+  final Widget child;
+  const _FlyArc({
+    required this.from,
+    required this.to,
+    required this.duration,
+    required this.lift,
+    required this.onEnd,
+    required this.child,
+  });
+
+  @override
+  State<_FlyArc> createState() => _FlyArcState();
+}
+
+class _FlyArcState extends State<_FlyArc> with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  Rect? _last;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: widget.duration);
+    _c.forward().whenComplete(widget.onEnd);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) {
+        final target = widget.to() ?? _last ?? widget.from;
+        _last = target;
+        final t = Curves.easeInOutCubic.transform(_c.value);
+        final rect = Rect.lerp(widget.from, target, t)!;
+        final arc = -4 * widget.lift * t * (1 - t);
+        final pop = 1.0 + 0.12 * sin(pi * t);
+        return Positioned(
+          left: rect.left,
+          top: rect.top + arc,
+          width: rect.width,
+          height: rect.height,
+          child: IgnorePointer(
+            child: Material(
+              type: MaterialType.transparency,
+              child: Transform.scale(
+                scale: pop,
+                child: FittedBox(
+                  fit: BoxFit.fill,
+                  child: SizedBox.fromSize(size: widget.from.size, child: widget.child),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

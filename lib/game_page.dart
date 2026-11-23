@@ -10,6 +10,7 @@ import 'ui.dart';
 import 'ai_glue.dart';
 import 'ai_ui.dart';
 import 'enter_fx.dart';
+import 'game_music.dart';
 
 class GamePage extends StatefulWidget {
   final bool free;
@@ -468,6 +469,7 @@ class _GamePageState extends State<GamePage> with TickerProviderStateMixin {
           ),
         ),
         if (online) ...onlineBadges(context, m!.link),
+        InGameMusic(online: online),
       ],
     );
   }

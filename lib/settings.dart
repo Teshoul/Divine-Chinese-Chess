@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'avatar_model.dart';
 import 'festival.dart';
 import 'items.dart';
 
@@ -237,6 +239,13 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
   bool tampered = false;
   String storageStatus = '读取中…';
   final ValueNotifier<int> avatarRev = ValueNotifier<int>(0);
+  /// 背景图层变化（拖动、缩放、换图）时 +1，所有 ImageSlot 立刻重绘，不用重建整个应用
+  final ValueNotifier<int> layerRev = ValueNotifier<int>(0);
+  /// 头像库里每张头像的编辑数据（裁剪 / 调色 / 涂鸦 / 贴纸…），键是头像文件路径
+  final Map<String, Map<String, dynamic>> avatarEdits = <String, Map<String, dynamic>>{};
+  final Map<String, AvatarEdit> _editCache = <String, AvatarEdit>{};
+  bool gameMusic = true; // 局内音乐小按钮
+  int gameMusicPos = 0; // 0 顶栏右侧 1 棋手栏左侧 2 棋手栏右侧
   final Set<String> unlocked = <String>{};
   final Set<String> owned = <String>{};
   final List<String> eqBadges = <String>[];
@@ -435,6 +444,17 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         }
       });
     }
+    layerRev.value++;
+    gameMusic = _b(j['gm'], true);
+    gameMusicPos = _i(j['gmp'], 0, 2);
+    avatarEdits.clear();
+    _editCache.clear();
+    final ae = j['aedits'];
+    if (ae is Map) {
+      ae.forEach((k, v) {
+        if (v is Map) avatarEdits[k.toString()] = Map<String, dynamic>.from(v);
+      });
+    }
     name = _s(j['name'], name);
     uid = _s(j['uid'], uid);
     bio = _s(j['bio'], bio);
@@ -508,6 +528,9 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
         'eqc': eqCorner,
         'custom': custom,
         'layers': {for (final e in layers.entries) e.key: e.value.toJson()},
+        'gm': gameMusic,
+        'gmp': gameMusicPos,
+        'aedits': avatarEdits,
         'name': name,
         'uid': uid,
         'bio': bio,
@@ -561,6 +584,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
       _pending = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _pending = false;
+        layerRev.value++;
         notifyListeners();
       });
       WidgetsBinding.instance.scheduleFrame();
@@ -579,6 +603,46 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     f();
     avatarRev.value++;
     _later();
+  }
+
+  /// 只刷新背景图层（拖动 / 缩放 / 滑块时用，每一帧都能跟手，不重建整个应用）
+  void touchLayer(VoidCallback f) {
+    f();
+    layerRev.value++;
+    _later();
+  }
+
+  // ───────────── 头像编辑数据 ─────────────
+
+  AvatarEdit? editOf(String path) {
+    final c = _editCache[path];
+    if (c != null) return c;
+    final raw = avatarEdits[path];
+    if (raw == null) return null;
+    try {
+      final e = AvatarEdit.fromJson(raw);
+      _editCache[path] = e;
+      return e;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void setAvatarEdit(String path, AvatarEdit e) {
+    avatarEdits[path] = e.toJson();
+    _editCache[path] = e;
+  }
+
+  /// 移除一张头像的编辑数据，返回需要一并删除的附带文件（贴纸、静态快照）
+  List<String> dropAvatarEdit(String path) {
+    final raw = avatarEdits.remove(path);
+    _editCache.remove(path);
+    if (raw == null) return const <String>[];
+    try {
+      return AvatarEdit.fromJson(raw).extraFiles();
+    } catch (_) {
+      return const <String>[];
+    }
   }
 
   // ───────────── 道具 / 装扮 ─────────────
@@ -670,6 +734,7 @@ class AppSettings extends ChangeNotifier with WidgetsBindingObserver {
     final keepDev = dev;
     _read(m);
     dev = keepDev;
+    layerRev.value++;
     tampered = false;
     if (dev) grantAll();
     avatarRev.value++;
@@ -696,6 +761,33 @@ Future<String?> pickImage() async {
         await File(x.path).delete();
       } catch (_) {}
     }
+    return f.path;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// 从系统“文件”里选图（能选到 SVG / GIF / WebP，相册选不到 SVG 时用这个）
+Future<String?> pickImageFile() async {
+  try {
+    app.beginExternal();
+    final r = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'],
+      allowMultiple: false,
+      withData: false,
+    );
+    if (r == null || r.files.isEmpty) return null;
+    final src = r.files.first.path;
+    if (src == null) return null;
+    final dir = await getApplicationDocumentsDirectory();
+    final dot = src.lastIndexOf('.');
+    final ext = (dot > 0 && src.length - dot <= 5) ? src.substring(dot).toLowerCase() : '.png';
+    final f = await File(src)
+        .copy('${dir.path}/img_${DateTime.now().millisecondsSinceEpoch}$ext');
+    try {
+      await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {}
     return f.path;
   } catch (_) {
     return null;

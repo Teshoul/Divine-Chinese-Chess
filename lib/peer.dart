@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'avatar_view.dart';
 import 'glitch.dart';
 import 'items.dart';
 import 'net.dart';
@@ -34,7 +35,10 @@ Future<Map<String, dynamic>> buildHello() async {
   final star = p == kStarAvatar && app.owns('avatar_star');
   if (p != null && p != kStarAvatar) {
     try {
-      final f = File(p);
+      // 编辑过的头像用编辑完成时拍下的静态图发给对手
+      final snap = app.avatarEdits[p]?['snap'];
+      var f = File(p);
+      if (snap is String && File(snap).existsSync()) f = File(snap);
       if (f.existsSync()) {
         final bytes = await f.readAsBytes();
         final codec = await ui.instantiateImageCodec(bytes, targetWidth: 96);
@@ -115,15 +119,13 @@ class PlayerBadge extends StatelessWidget {
     if (dyn) {
       inner = const StarAvatarFill();
     } else {
-      ImageProvider? img;
+      Widget? img;
       if (bytes != null) {
-        img = MemoryImage(bytes!);
+        img = Image.memory(bytes!, fit: BoxFit.cover, gaplessPlayback: true);
       } else if (file != null && File(file!).existsSync()) {
-        img = ResizeImage(FileImage(File(file!)), width: 160);
+        img = AvatarImage(path: file!, cache: 160);
       }
-      inner = img != null
-          ? Image(image: img, fit: BoxFit.cover, gaplessPlayback: true)
-          : Icon(Icons.person, color: cs.onSurfaceVariant);
+      inner = img ?? Icon(Icons.person, color: cs.onSurfaceVariant);
     }
     final box = Container(
       decoration: BoxDecoration(
