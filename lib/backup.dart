@@ -230,7 +230,28 @@ Future<String> exportBackup(BuildContext context) async {
     if (ly is Map) {
       for (final k in ly.keys.toList()) {
         final v = ly[k];
-        if (v is Map) v['path'] = put(v['path'] as String?, 'files');
+        if (v is Map) {
+          v['path'] = put(v['path'] as String?, 'files');
+          final ed = v['ed'];
+          if (ed is Map) {
+            final its = ed['it'];
+            if (its is List) {
+              final outIts = <Map<String, dynamic>>[];
+              for (final it in its) {
+                if (it is! Map) continue;
+                final m2 = Map<String, dynamic>.from(it);
+                if (m2['k'] == 'sticker') {
+                  final e = put(m2['i'] as String?, 'files');
+                  if (e == null) continue;
+                  m2['i'] = e;
+                }
+                outIts.add(m2);
+              }
+              ed['it'] = outIts;
+            }
+            ed['snap'] = null;
+          }
+        }
       }
     }
     final music = <Map<String, dynamic>>[];
@@ -357,7 +378,27 @@ Future<String> importBackup(BuildContext context) async {
     if (ly is Map) {
       for (final k in ly.keys.toList()) {
         final v = ly[k];
-        if (v is Map) v['path'] = mp(v['path']);
+        if (v is Map) {
+          v['path'] = mp(v['path']);
+          final ed = v['ed'];
+          if (ed is Map) {
+            final its = ed['it'];
+            if (its is List) {
+              final outIts = <Map<String, dynamic>>[];
+              for (final it in its) {
+                if (it is! Map) continue;
+                final m2 = Map<String, dynamic>.from(it);
+                if (m2['k'] == 'sticker') {
+                  final e = mp(m2['i']);
+                  if (e == null) continue;
+                  m2['i'] = e;
+                }
+                outIts.add(m2);
+              }
+              ed['it'] = outIts;
+            }
+          }
+        }
       }
     }
     final tracks = <Track>[];

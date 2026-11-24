@@ -177,6 +177,32 @@ List<Offset> xfQuad(Xf x, Size box) {
   ];
 }
 
+/// 四角透视是否还“合法”：四边形是凸的、没有塌成一条线、没有翻到背面。
+/// 不合法时图片会整个消失，所以拖动 / 输入数值时一旦不合法就拒绝这一步。
+bool xfPerspOk(Xf x, Size box) {
+  if (!x.hasPersp) return true;
+  final m = xfMatrix(x, box);
+  final st = m.storage;
+  final r = xfContainRect(box, x.ar);
+  for (final c in _corners(r)) {
+    final w = st[3] * c.dx + st[7] * c.dy + st[15];
+    if (!w.isFinite || w < 1e-3) return false;
+  }
+  final q = xfQuad(x, box);
+  double sign = 0;
+  for (var i = 0; i < 4; i++) {
+    final a = q[i], b = q[(i + 1) % 4], c = q[(i + 2) % 4];
+    final cr = (b.dx - a.dx) * (c.dy - b.dy) - (b.dy - a.dy) * (c.dx - b.dx);
+    if (!cr.isFinite || cr.abs() < 1e-2) return false;
+    if (sign == 0) {
+      sign = cr.sign;
+    } else if (cr.sign != sign) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // ───────────── 手柄：命中 / 拖动 ─────────────
 
 const int kHRot = 8;
@@ -252,8 +278,14 @@ class XfDrag {
     if (warp && h < 4) {
       final lp = MatrixUtils.transformPoint(_inv0, pos);
       final src = _corners(_r)[h];
+      final ox = x.p[h * 2], oy = x.p[h * 2 + 1];
       x.p[h * 2] = ((lp.dx - src.dx) / _r.width).clamp(-3.0, 3.0).toDouble();
       x.p[h * 2 + 1] = ((lp.dy - src.dy) / _r.height).clamp(-3.0, 3.0).toDouble();
+      if (!xfPerspOk(x, box)) {
+        // 拖过头会让图片消失：这一步不算，角停在上一个合法位置
+        x.p[h * 2] = ox;
+        x.p[h * 2 + 1] = oy;
+      }
     } else if (h == kHRot) {
       final a0 = atan2(_start.dy - _center0.dy, _start.dx - _center0.dx);
       final a1 = atan2(pos.dy - _center0.dy, pos.dx - _center0.dx);
@@ -268,17 +300,17 @@ class XfDrag {
     } else if (h < 4) {
       final d0 = max((_start - _center0).distance, 1.0);
       final d1 = (pos - _center0).distance;
-      x.scale = (_x0.scale * d1 / d0).clamp(0.05, 20.0).toDouble();
+      x.scale = (_x0.scale * d1 / d0).clamp(0.05, 150.0).toDouble();
     } else {
       // 边中点：只拉宽或只拉高
       final lp = MatrixUtils.transformPoint(_inv0, pos);
       final cx = _r.center.dx, cy = _r.center.dy;
       if (h == 4 || h == 6) {
         final base = max((_r.height / 2), 1.0);
-        x.sy = (_x0.sy * ((lp.dy - cy).abs() / base)).clamp(0.05, 20.0).toDouble();
+        x.sy = (_x0.sy * ((lp.dy - cy).abs() / base)).clamp(0.05, 150.0).toDouble();
       } else {
         final base = max((_r.width / 2), 1.0);
-        x.sx = (_x0.sx * ((lp.dx - cx).abs() / base)).clamp(0.05, 20.0).toDouble();
+        x.sx = (_x0.sx * ((lp.dx - cx).abs() / base)).clamp(0.05, 150.0).toDouble();
       }
     }
   }

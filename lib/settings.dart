@@ -175,12 +175,14 @@ class ImgLayer {
   String? path;
   double opacity, blur;
   bool enabled; // 这一层图片是否启用（关掉后图片还在，只是不显示）
-  final Xf xf;
-  ImgLayer({this.path, this.opacity = 1, this.blur = 0, this.enabled = true, Xf? xf})
-      : xf = xf ?? Xf();
+  AvatarEdit edit; // 变换（edit.xf）+ 调色 + 涂鸦 + 图形 / 贴纸 / 文字，和头像编辑器完全一样
+  ImgLayer({this.path, this.opacity = 1, this.blur = 0, this.enabled = true, AvatarEdit? edit})
+      : edit = edit ?? AvatarEdit();
+
+  Xf get xf => edit.xf;
 
   void resetTransform() {
-    xf.resetAll();
+    edit.xf.resetAll();
     opacity = 1;
     blur = 0;
   }
@@ -191,20 +193,29 @@ class ImgLayer {
       'op': _d(opacity, 1),
       'blur': _d(blur, 0),
       'en': enabled,
+      'ed': edit.toJson(),
     };
-    xf.writeBg(m);
     return m;
   }
 
   static ImgLayer fromJson(Map<String, dynamic> j) {
-    final l = ImgLayer(
+    AvatarEdit e;
+    final ed = j['ed'];
+    if (ed is Map) {
+      e = AvatarEdit.fromJson(Map<String, dynamic>.from(ed));
+    } else {
+      // 旧版存档：只有 scale dx dy rot sx sy
+      final x = Xf();
+      x.readBg(j);
+      e = AvatarEdit(xf: x);
+    }
+    return ImgLayer(
       path: j['path'] is String ? j['path'] as String : null,
       opacity: _d(j['op'], 1),
       blur: _d(j['blur'], 0),
       enabled: j['en'] != false,
+      edit: e,
     );
-    l.xf.readBg(j);
-    return l;
   }
 }
 

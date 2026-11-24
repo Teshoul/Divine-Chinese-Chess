@@ -104,7 +104,20 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
   }
 
   void _pick(String p) {
-    if (app.avatar == p || _hidden != null) return;
+    if (_hidden != null) return;
+    if (app.avatar == p) {
+      // 再点一次当前头像：直接进入编辑（口令获得的头像不能编辑）
+      if (p == kStarAvatar || !app.avatars.contains(p)) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(tr('口令获得的头像不能再次编辑'))),
+        );
+      } else if (avatarInFlight.value == null &&
+          avatarEditRequest.value == null &&
+          File(p).existsSync()) {
+        avatarEditRequest.value = p;
+      }
+      return;
+    }
     final from = globalRectOf(_k(p));
     final to = globalRectOf(widget.avatarKey);
     if (from == null || to == null) {
@@ -342,7 +355,7 @@ class _AvatarDrawerState extends State<AvatarDrawer> with SingleTickerProviderSt
             children: [
               Expanded(
                 child: Text(
-                  tx('长按拖动可调整顺序，拖到右上角的垃圾桶可删除'),
+                  '${tx('长按拖动可调整顺序，拖到右上角的垃圾桶可删除')}\n${tr('再点一下当前头像可以重新编辑')}',
                   style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                 ),
               ),

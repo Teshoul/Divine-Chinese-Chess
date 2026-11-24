@@ -10,6 +10,7 @@ import 'avatar_model.dart';
 import 'avatar_view.dart';
 import 'fly.dart';
 import 'img_util.dart';
+import 'screen_frames.dart';
 import 'settings.dart';
 import 'strings.dart';
 import 'ui.dart';
@@ -45,19 +46,59 @@ class AvatarEditorPage extends StatefulWidget {
   final String path;
   final VoidCallback onCancel;
   final void Function(String path, AvatarEdit edit, Rect from) onDone;
+  final AvatarEdit? initial; // 二次编辑已有头像时，从它现在的样子开始
+  final String? slot; // 不为空 = 背景图模式（'global' / 'home' / 'game'），直接编辑那一层背景
   const AvatarEditorPage({
     super.key,
     required this.path,
     required this.onCancel,
     required this.onDone,
+    this.initial,
+    this.slot,
   });
 
   @override
   State<AvatarEditorPage> createState() => _AvatarEditorPageState();
 }
 
-class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerProviderStateMixin {
-  AvatarEdit edit = AvatarEdit();
+class _AvatarEditorPageState extends State<AvatarEditorPage> with TickerProviderStateMixin {
+  AvatarEdit _e = AvatarEdit();
+  bool get _bg => widget.slot != null;
+  ImgLayer? get _lay => _bg ? app.layers[widget.slot!] : null;
+  String get _path => _lay?.path ?? widget.path;
+  AvatarEdit get edit => _bg ? _lay!.edit : _e;
+  set edit(AvatarEdit v) {
+    if (_bg) {
+      _lay!.edit = v;
+    } else {
+      _e = v;
+    }
+  }
+
+  ScreenFrame get _fr => kScreenFrames[app.layerFrame.clamp(0, kScreenFrames.length - 1)];
+
+  /// 画布的高 / 宽：头像是正方形，背景图按选的手机屏幕外形
+  double get _ar {
+    if (!_bg) return 1;
+    final f = _fr;
+    if (f.ar > 0) return f.ar;
+    final sz = MediaQuery.sizeOf(context);
+    return sz.width <= 0 ? 2.0 : sz.height / sz.width;
+  }
+
+  Size _box(double s) => Size(s, s * _ar);
+  bool get _itemTool => tool >= 3 && tool <= 5;
+  bool _zonesOn = true;
+
+  /// 把画布框放进 area 里能放下的最大尺寸（返回框的宽）
+  double _fitS(Size a, bool full) {
+    if (_bg) {
+      final k = full ? 0.35 : 0.5;
+      return max(80.0, min(a.width / (full ? 1.3 : 1.5), a.height / (_ar + k)));
+    }
+    return max(80.0, min(a.width, a.height) * (full ? 0.88 : 0.8));
+  }
+
   final List<String> _undo = <String>[];
   int tool = 0; // 0 裁剪 1 调色 2 涂鸦 3 图形 4 贴纸 5 文字
   int? sel;
@@ -85,7 +126,12 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
   );
   final ValueNotifier<int> _fullRev = ValueNotifier<int>(0);
   final GlobalKey _areaKey = GlobalKey();
-  OverlayEntry? _fullEntry;
+  late final AnimationController _pc = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 300),
+  );
+  Route<void>? _fullRoute;
+  NavigatorState? _fullNav;
   bool _full = false;
   bool _setOpen = false;
   Rect? _fromArea;
@@ -95,42 +141,71 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
   @override
   void setState(VoidCallback fn) {
     super.setState(fn);
+    if (_bg) app.touchLayer(() {}); // 背景图：每一步都实时刷新所有页面
     if (_full) _fullRev.value++;
   }
 
-  static const List<IconData> _toolIcons = [
-    Icons.crop_rotate,
-    Icons.tune,
-    Icons.brush,
-    Icons.category,
-    Icons.emoji_emotions,
-    Icons.text_fields,
-  ];
-  static const List<String> _toolNames = ['裁剪', '调色', '涂鸦', '图形', '贴纸', '文字'];
+  List<IconData> get _toolIcons => [
+        Icons.crop_rotate,
+        Icons.tune,
+        Icons.brush,
+        Icons.category,
+        Icons.emoji_emotions,
+        Icons.text_fields,
+        if (_bg) Icons.smartphone,
+      ];
+  List<String> get _toolNames => [
+        '裁剪',
+        '调色',
+        '涂鸦',
+        '图形',
+        '贴纸',
+        '文字',
+        if (_bg) '屏幕',
+      ];
 
   @override
   void initState() {
     super.initState();
-    imageNaturalSize(widget.path).then((sz) {
-      if (!mounted || sz == null || sz.width <= 0 || sz.height <= 0) return;
-      final ar = sz.width / sz.height;
-      final cover = max(ar, 1 / ar).clamp(1.0, 8.0).toDouble();
-      setState(() {
-        _cover = cover;
-        edit.zoom = cover;
-        edit.xf.ar = ar;
-      });
+    if (widget.initial != null && !_bg) _e = widget.initial!.clone();
+    _loadAr();
+  }
+
+  Future<void> _loadAr() async {
+    final sz = await imageNaturalSize(_path);
+    if (!mounted || sz == null || sz.width <= 0 || sz.height <= 0) return;
+    final ar = sz.width / sz.height;
+    final cover = max(ar, 1 / ar).clamp(1.0, 8.0).toDouble();
+    setState(() {
+      _cover = cover;
+      if (!_bg && widget.initial == null) edit.zoom = cover;
+      edit.xf.ar = ar;
     });
   }
 
   @override
   void dispose() {
     try {
-      _fullEntry?.remove();
+      final r = _fullRoute;
+      if (r != null && r.isActive) _fullNav?.removeRoute(r);
     } catch (_) {}
+    _pc.dispose();
     _fc.dispose();
     _fullRev.dispose();
-    if (!_confirmed) {
+    if (_bg) {
+      // 背景图模式没有“确定”：没被用上的贴纸文件清掉
+      final used = <String>{
+        for (final i in edit.items)
+          if (i.kind == 'sticker') i.id
+      };
+      for (final t in _tmp) {
+        if (!used.contains(t)) {
+          try {
+            File(t).deleteSync();
+          } catch (_) {}
+        }
+      }
+    } else if (!_confirmed) {
       for (final t in _tmp) {
         try {
           File(t).deleteSync();
@@ -183,7 +258,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     final fp = p - o;
     if (tool == 0) {
       final before = jsonEncode(edit.toJson());
-      if (_xd.begin(edit.xf, Size(s, s), fp, _warp)) {
+      if (_xd.begin(edit.xf, _box(s), fp, _warp)) {
         _undo.add(before);
         setState(() {});
       }
@@ -194,7 +269,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
         edit.strokes.add(st);
         _cur = st;
       });
-    } else if (tool >= 3) {
+    } else if (_itemTool) {
       final i = _hit(fp, s);
       if (i != sel) setState(() => sel = i);
     }
@@ -203,7 +278,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
   void _move(Offset p, Offset o, double s) {
     final fp = p - o;
     if (_xd.active) {
-      setState(() => _xd.update(edit.xf, Size(s, s), fp, _warp));
+      setState(() => _xd.update(edit.xf, _box(s), fp, _warp));
       return;
     }
     final st = _cur;
@@ -229,7 +304,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
       if (_ptrs <= 1) _push();
       _z0 = edit.zoom;
       _r0 = edit.rot;
-    } else if (tool >= 3 && sel != null && sel! < edit.items.length) {
+    } else if (_itemTool && sel != null && sel! < edit.items.length) {
       if (_ptrs <= 1) _push();
       final it = edit.items[sel!];
       _z0 = it.scale;
@@ -242,17 +317,17 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     if (tool == 0) {
       setState(() {
         edit.ox += d.focalPointDelta.dx / s;
-        edit.oy += d.focalPointDelta.dy / s;
+        edit.oy += d.focalPointDelta.dy / (s * _ar);
         if (d.pointerCount >= 2) {
-          edit.zoom = (_z0 * d.scale).clamp(0.05, 20.0).toDouble();
+          edit.zoom = (_z0 * d.scale).clamp(0.05, 150.0).toDouble();
           edit.rot = _wrap180(_r0 + d.rotation * 180 / pi);
         }
       });
-    } else if (tool >= 3 && sel != null && sel! < edit.items.length) {
+    } else if (_itemTool && sel != null && sel! < edit.items.length) {
       final it = edit.items[sel!];
       setState(() {
         it.x = (it.x + d.focalPointDelta.dx / s).clamp(-0.3, 1.3).toDouble();
-        it.y = (it.y + d.focalPointDelta.dy / s).clamp(-0.3, 1.3).toDouble();
+        it.y = (it.y + d.focalPointDelta.dy / s).clamp(-0.3, _ar + 0.3).toDouble();
         if (d.pointerCount >= 2) {
           it.scale = (_z0 * d.scale).clamp(0.2, 6.0).toDouble();
           it.rot = _wrap180(_r0 + d.rotation * 180 / pi);
@@ -332,6 +407,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     final c = TextEditingController(text: init);
     return showDialog<String>(
       context: context,
+      useRootNavigator: true,
       builder: (ctx) => AlertDialog(
         title: Text(tr('输入文字')),
         content: TextField(
@@ -481,11 +557,11 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
   }
 
   Widget _btn(IconData icon, String label, VoidCallback? onTap) {
-    return OutlinedButton.icon(
+    return FilledButton.tonalIcon(
       onPressed: onTap,
-      style: OutlinedButton.styleFrom(
+      style: FilledButton.styleFrom(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: const Size(0, 36),
+        minimumSize: const Size(0, 38),
       ),
       icon: Icon(icon, size: 18),
       label: Text(tr(label), style: const TextStyle(fontSize: 13)),
@@ -510,21 +586,21 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     final cs = Theme.of(context).colorScheme;
     final fg = on
         ? (app.primary.computeLuminance() > 0.5 ? Colors.black87 : Colors.white)
-        : cs.onSurfaceVariant;
+        : cs.onSurface;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: GestureDetector(
         onTap: () => setState(() {
           tool = i;
-          if (i < 3) sel = null;
+          if (i < 3 || i > 5) sel = null;
         }),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: on ? app.primary : cs.onSurface.withOpacity(0.06),
+            color: on ? app.primary : cs.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: on ? Colors.white54 : cs.outline.withOpacity(0.5)),
+            border: Border.all(color: on ? Colors.white54 : cs.outline.withOpacity(0.85)),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -557,7 +633,11 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
             suffix: '%',
             onChanged: (v) {
               _push();
-              setState(() => edit.xf.p[i] = v / 100);
+              setState(() {
+                final old = edit.xf.p[i];
+                edit.xf.p[i] = v / 100;
+                if (!xfPerspOk(edit.xf, _box(_curS))) edit.xf.p[i] = old; // 拉过头图片会消失，拒绝
+              });
             },
           ),
         ],
@@ -569,7 +649,7 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _hint('单指拖动图片，双指缩放 / 旋转；拖动高亮框上的圆点缩放，方块拉宽 / 拉高，圆环旋转。框外的部分会半透明显示'),
+        _hint('单指拖动图片，双指缩放 / 旋转（最大 15000%）；拖动高亮框上的圆点缩放，方块拉宽 / 拉高，圆环旋转。框外的部分会半透明显示'),
         LitToggle(
           wide: true,
           icon: Icons.grid_on,
@@ -579,11 +659,11 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
         ),
         const SizedBox(height: 6),
         _sl('缩放', edit.zoom, 0.2, 8, (v) => edit.zoom = v,
-            mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+            mul: 100, suf: '%', nMin: 0.05, nMax: 150),
         _sl('宽度', edit.xf.sx, 0.2, 4, (v) => edit.xf.sx = v,
-            mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+            mul: 100, suf: '%', nMin: 0.05, nMax: 150),
         _sl('高度', edit.xf.sy, 0.2, 4, (v) => edit.xf.sy = v,
-            mul: 100, suf: '%', nMin: 0.05, nMax: 20),
+            mul: 100, suf: '%', nMin: 0.05, nMax: 150),
         _sl('水平位置', edit.ox, -1.5, 1.5, (v) => edit.ox = v,
             mul: 100, suf: '%', nMin: -10, nMax: 10),
         _sl('垂直位置', edit.oy, -1.5, 1.5, (v) => edit.oy = v,
@@ -615,6 +695,14 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
           spacing: 8,
           runSpacing: 8,
           children: [
+            _btn(Icons.zoom_in, '放大 ×2', () {
+              _push();
+              setState(() => edit.zoom = (edit.zoom * 2).clamp(0.05, 150.0).toDouble());
+            }),
+            _btn(Icons.zoom_out, '缩小 ×½', () {
+              _push();
+              setState(() => edit.zoom = (edit.zoom / 2).clamp(0.05, 150.0).toDouble());
+            }),
             _btn(Icons.fit_screen, '显示整图', () {
               _push();
               setState(() {
@@ -876,8 +964,10 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
         return _panelShapes();
       case 4:
         return _panelSticker();
-      default:
+      case 5:
         return _panelText();
+      default:
+        return _panelScreen();
     }
   }
 
@@ -902,10 +992,215 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     );
   }
 
-  /// 画布：area 是整块可操作区域，头像框居中，边长 s
+  // ───────────── 背景图模式：“屏幕”工具面板 ─────────────
+
+  Future<void> _pickBgImage() async {
+    final l = _lay;
+    if (l == null) return;
+    final p = await pickImageChoose(context);
+    if (p == null || !mounted) return;
+    app.change(() {
+      l.path = p;
+      edit.xf.ar = 0;
+    });
+    app.touchLayer(() {});
+    await _loadAr();
+  }
+
+  /// 把整张图“适应屏幕”（完整显示）或“铺满屏幕”（填满，超出的部分保留在屏幕外）
+  Future<void> _fitBg(bool cover) async {
+    final sz = await imageNaturalSize(_path);
+    if (!mounted) return;
+    var z = 1.0;
+    double? iar;
+    if (sz != null && sz.width > 0 && sz.height > 0) {
+      iar = sz.width / sz.height;
+      final rw = 1 / sz.width, rh = _ar / sz.height;
+      z = cover ? max(rw, rh) / min(rw, rh) : 1.0;
+    }
+    _push();
+    setState(() {
+      edit.xf.resetAll();
+      edit.xf.scale = z.clamp(0.05, 150.0).toDouble();
+      if (iar != null) edit.xf.ar = iar;
+    });
+  }
+
+  Widget _panelScreen() {
+    final l = _lay!;
+    final cs = Theme.of(context).colorScheme;
+    final zs = zonesFor(widget.slot!);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        LitToggle(
+          wide: true,
+          icon: l.enabled ? Icons.visibility : Icons.visibility_off,
+          label: tr(l.enabled ? '这张图片已启用' : '这张图片已停用'),
+          value: l.enabled,
+          onChanged: (v) {
+            app.change(() => l.enabled = v);
+            setState(() {});
+          },
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: _pickBgImage,
+              style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  minimumSize: const Size(0, 38)),
+              icon: const Icon(Icons.image, size: 18),
+              label: Text(tr('选择图片')),
+            ),
+            _btn(Icons.fit_screen, '适应屏幕', () => _fitBg(false)),
+            _btn(Icons.crop_free, '铺满屏幕', () => _fitBg(true)),
+            _btn(Icons.restart_alt, '重置变换', () {
+              _push();
+              setState(() => l.resetTransform());
+            }),
+            _btn(Icons.hide_image_outlined, '移除图片', () {
+              app.change(() => l.path = null);
+              app.touchLayer(() {});
+            }),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _sl('透明度', l.opacity, 0, 1, (v) => l.opacity = v.clamp(0.0, 1.0).toDouble(),
+            mul: 100, suf: '%', nMin: 0, nMax: 1),
+        _sl('模糊', l.blur, 0, 20, (v) => l.blur = v.clamp(0.0, 60.0).toDouble(),
+            dec: 1, nMin: 0, nMax: 60),
+        if (zs.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          LitToggle(
+            wide: true,
+            icon: Icons.grid_4x4,
+            label: tr('显示遮挡区域'),
+            value: _zonesOn,
+            onChanged: (v) => setState(() => _zonesOn = v),
+          ),
+          _hint('红色斜纹区域会被界面元素遮挡'),
+        ],
+        _title('手机屏幕外形'),
+        _hint('选和你手机最像的屏幕框来预览（刘海、挖孔、曲面边缘都会画出来）；“我的手机”按这台设备的真实比例。'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var i = 0; i < kScreenFrames.length; i++)
+              i == app.layerFrame
+                  ? FilledButton(
+                      onPressed: () {},
+                      style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: const Size(0, 36)),
+                      child: Text(tr(kScreenFrames[i].name)),
+                    )
+                  : FilledButton.tonal(
+                      onPressed: () {
+                        app.change(() => app.layerFrame = i);
+                        setState(() {});
+                      },
+                      style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: const Size(0, 36),
+                          side: BorderSide(color: cs.outline.withOpacity(0.6))),
+                      child: Text(tr(kScreenFrames[i].name)),
+                    ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ───────────── 画布 ─────────────
+
+  Widget _frameBody(double s, double bh) {
+    final cs = Theme.of(context).colorScheme;
+    if (!_bg) {
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: AvatarView(
+              path: _path,
+              edit: edit,
+              showOutside: tool == 0,
+              boundaryKey: _boundaryKey,
+              selected: _itemTool ? sel : null,
+              radiusFrac: 0.2,
+            ),
+          ),
+          IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(s * 0.2),
+                border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.4),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+    final fr = _fr;
+    final zs = zonesFor(widget.slot!);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        // 框外：整张图半透明显示，没有任何部分被裁掉
+        Positioned.fill(
+          child: Opacity(opacity: 0.35, child: ImageSlot(slot: widget.slot!, clip: false, force: true)),
+        ),
+        // 框内：真正在手机屏幕上看到的样子
+        Positioned.fill(
+          child: ClipPath(
+            clipper: FrameClipper(fr),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [app.bgTop, app.bgBottom],
+                    ),
+                  ),
+                ),
+                ImageSlot(
+                    slot: widget.slot!, force: true, selected: _itemTool ? sel : null),
+                if (_zonesOn && zs.isNotEmpty)
+                  IgnorePointer(child: CustomPaint(painter: ZonePainter(zs))),
+                IgnorePointer(child: CustomPaint(painter: FramePainter(fr))),
+              ],
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: IgnorePointer(
+            child: ClipPath(
+              clipper: FrameClipper(fr),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white, width: 2),
+                  borderRadius: BorderRadius.circular(fr.rad >= 0.5 ? s : fr.rad * s),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 画布：area 是整块可操作区域，图框居中，宽 s
   Widget _canvas(Size area, double s, {double radius = 16}) {
     final cs = Theme.of(context).colorScheme;
-    final o = Offset((area.width - s) / 2, (area.height - s) / 2);
+    final bh = s * _ar;
+    final o = Offset((area.width - s) / 2, (area.height - bh) / 2);
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: Listener(
@@ -922,42 +1217,24 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
             width: area.width,
             height: area.height,
             child: Stack(
-              alignment: Alignment.center,
+              clipBehavior: Clip.hardEdge,
               children: [
                 Positioned.fill(child: ColoredBox(color: cs.surfaceContainerHighest)),
-                SizedBox(
-                  key: _frameKey,
+                Positioned(
+                  left: o.dx,
+                  top: o.dy,
                   width: s,
-                  height: s,
-                  child: AvatarView(
-                    path: widget.path,
-                    edit: edit,
-                    showOutside: tool == 0,
-                    boundaryKey: _boundaryKey,
-                    selected: tool >= 3 ? sel : null,
-                    radiusFrac: 0.2,
-                  ),
+                  height: bh,
+                  child: KeyedSubtree(key: _frameKey, child: _frameBody(s, bh)),
                 ),
-                IgnorePointer(
-                  child: SizedBox(
+                if (tool == 0 && (_path.isNotEmpty))
+                  Positioned(
+                    left: o.dx,
+                    top: o.dy,
                     width: s,
-                    height: s,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(s * 0.2),
-                        border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.4),
-                      ),
-                    ),
-                  ),
-                ),
-                if (tool == 0)
-                  IgnorePointer(
-                    child: SizedBox(
-                      width: s,
-                      height: s,
-                      child: CustomPaint(
-                        painter: XfPainter(edit.xf, _warp, _xd.h, _xd),
-                      ),
+                    height: bh,
+                    child: IgnorePointer(
+                      child: CustomPaint(painter: XfPainter(edit.xf, _warp, _xd.h, _xd)),
                     ),
                   ),
               ],
@@ -973,58 +1250,135 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
   void _openFull() {
     if (_full || _busy) return;
     final r = globalRectOf(_areaKey);
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    if (r == null || overlay == null) return;
+    if (r == null) return;
     _fromArea = r;
     _fromS = _curS;
     _setOpen = false;
+    _pc.value = 0;
+    final nav = Navigator.of(context, rootNavigator: true);
+    _fullNav = nav;
+    // 用一个透明的新页面盖在最上面：这样文字输入框、选图面板、取色框都会显示在全屏编辑的上面
+    _fullRoute = PageRouteBuilder<void>(
+      opaque: false,
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (c, a, b) => PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _closeFull();
+        },
+        child: _fullBuilder(c),
+      ),
+    );
     setState(() => _full = true);
-    _fullEntry = OverlayEntry(builder: _fullBuilder);
-    overlay.insert(_fullEntry!);
+    nav.push(_fullRoute!);
     _fc.forward(from: 0);
   }
 
   Future<void> _closeFull() async {
     if (!_full || _fc.status == AnimationStatus.reverse) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     _setOpen = false;
+    _pc.reverse();
     _fullRev.value++;
     await _fc.reverse();
     try {
-      _fullEntry?.remove();
+      final r = _fullRoute;
+      if (r != null && r.isActive) _fullNav?.removeRoute(r);
     } catch (_) {}
-    _fullEntry = null;
+    _fullRoute = null;
     if (mounted) setState(() => _full = false);
   }
 
   void _stripTap(int i) {
-    // 第一次点：切到这个功能；再点一次：展开它的设置
+    // 第一次点：切到这个功能；再点一次：展开它的设置（图片会自动让出位置，不会被挡住）
     if (tool != i) {
       tool = i;
-      if (i < 3) sel = null;
+      if (i < 3 || i > 5) sel = null;
       _setOpen = false;
     } else {
       _setOpen = !_setOpen;
     }
+    if (_setOpen) {
+      _pc.forward();
+    } else {
+      _pc.reverse();
+    }
     setState(() {});
+  }
+
+  Widget _settingsCard(ColorScheme cs, {required double maxW}) {
+    return Material(
+      color: cs.surface,
+      elevation: 10,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: cs.outline.withOpacity(0.6)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 6, 0),
+              child: Row(
+                children: [
+                  Icon(_toolIcons[tool], size: 18, color: app.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(tr(_toolNames[tool]),
+                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      _setOpen = false;
+                      _pc.reverse();
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                child: _panel(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _fullBuilder(BuildContext octx) {
     return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[_fc, _fullRev]),
+      animation: Listenable.merge(<Listenable>[_fc, _pc, _fullRev]),
       builder: (context, _) {
         final mq = MediaQuery.of(context);
         final size = mq.size;
         final cs = Theme.of(context).colorScheme;
+        final land = size.width > size.height * 1.1;
         final t = Curves.easeInOutCubic.transform(_fc.value);
+        final pc = Curves.easeOutCubic.transform(_pc.value);
+        const stripW = 56.0;
         final topBar = mq.padding.top + 52;
-        final full = Rect.fromLTRB(0, topBar, size.width, size.height - mq.padding.bottom);
+        final cardH = land ? 0.0 : min(size.height * 0.42, 360.0);
+        final cardW = land ? min(size.width * 0.42, 400.0) : 0.0;
+        final full = Rect.fromLTRB(
+          mq.padding.left,
+          topBar,
+          size.width - stripW - mq.padding.right - cardW * pc,
+          size.height - mq.padding.bottom - (cardH + 8) * pc,
+        );
         final from = _fromArea ?? full;
         final area = Rect.lerp(from, full, t)!;
-        final sFull = max(120.0, min(full.width - 72, full.height - 24) * 0.96);
+        final sFull = _fitS(full.size, true);
         final s = lerpDouble(_fromS, sFull, t)!;
         final radius = lerpDouble(16, 0, t)!;
-        final cardMax = size.height * 0.46;
-        final stripH = _toolNames.length * 46.0 + 8 + 46 + 4;
         return Material(
           type: MaterialType.transparency,
           child: Stack(
@@ -1033,8 +1387,8 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
               Positioned.fromRect(rect: area, child: _canvas(area.size, s, radius: radius)),
               // 顶栏
               Positioned(
-                left: 8,
-                right: 8,
+                left: 8 + mq.padding.left,
+                right: 8 + mq.padding.right,
                 top: mq.padding.top,
                 height: 52,
                 child: Opacity(
@@ -1062,80 +1416,61 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
               ),
               // 右边：小图标列表，点一下选中，再点一下展开设置
               Positioned(
-                right: 8,
-                top: topBar + max(0.0, (full.height - stripH) / 2 - 16),
+                right: 6 + mq.padding.right,
+                top: topBar,
+                bottom: mq.padding.bottom + 6,
+                width: 48,
                 child: Opacity(
                   opacity: t,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: cs.surface.withOpacity(0.82),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: cs.outline.withOpacity(0.4)),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (var i = 0; i < _toolNames.length; i++)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 3),
-                            child: _roundBtn(_toolIcons[i], () => _stripTap(i),
-                                on: tool == i, size: 40),
-                          ),
-                      ],
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: cs.surface,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: cs.outline.withOpacity(0.6)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var i = 0; i < _toolNames.length; i++)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 3),
+                                child: _roundBtn(_toolIcons[i], () => _stripTap(i),
+                                    on: tool == i, size: 38),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
               ),
-              // 设置面板：从底部升起
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeOutCubic,
-                left: 8,
-                right: 64,
-                bottom: _setOpen ? mq.viewInsets.bottom + mq.padding.bottom + 8 : -size.height * 0.6,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: cardMax),
-                  child: Material(
-                    color: cs.surfaceContainerHigh.withOpacity(0.97),
-                    elevation: 8,
-                    borderRadius: BorderRadius.circular(18),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
-                          child: Row(
-                            children: [
-                              Icon(_toolIcons[tool], size: 18, color: app.primary),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(tr(_toolNames[tool]),
-                                    style: const TextStyle(fontWeight: FontWeight.w800)),
-                              ),
-                              IconButton(
-                                visualDensity: VisualDensity.compact,
-                                onPressed: () {
-                                  _setOpen = false;
-                                  setState(() {});
-                                },
-                                icon: const Icon(Icons.keyboard_arrow_down),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Flexible(
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-                            child: _panel(),
-                          ),
-                        ),
-                      ],
+              // 设置面板：竖屏从下面升起，横屏从右边滑出；图片区域会同步让开
+              if (pc > 0.001)
+                if (land)
+                  Positioned(
+                    top: topBar,
+                    bottom: mq.padding.bottom + 8,
+                    right: stripW + mq.padding.right + 4,
+                    width: cardW - 8,
+                    child: Transform.translate(
+                      offset: Offset((1 - pc) * (cardW + 80), 0),
+                      child: _settingsCard(cs, maxW: cardW),
+                    ),
+                  )
+                else
+                  Positioned(
+                    left: 8 + mq.padding.left,
+                    right: stripW + mq.padding.right + 4,
+                    bottom: mq.padding.bottom + 8,
+                    height: cardH,
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - pc) * (cardH + 60)),
+                      child: _settingsCard(cs, maxW: size.width),
                     ),
                   ),
-                ),
-              ),
             ],
           ),
         );
@@ -1143,84 +1478,151 @@ class _AvatarEditorPageState extends State<AvatarEditorPage> with SingleTickerPr
     );
   }
 
+  // ───────────── 页面 ─────────────
+
+  Widget _topRow() {
+    return SizedBox(
+      height: 52,
+      child: Padding(
+        // 头像模式：左边留给左上角的返回按钮，它始终不动
+        padding: EdgeInsets.fromLTRB(_bg ? 12 : 62, 0, 10, 0),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(tr(_bg ? (widget.slot == 'global' ? '全局背景' : '编辑图片') : '编辑头像'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            ),
+            IconButton(
+              onPressed: _undo.isEmpty ? null : _doUndo,
+              tooltip: tr('撤销'),
+              icon: const Icon(Icons.undo),
+            ),
+            const SizedBox(width: 2),
+            if (!_bg)
+              FilledButton(
+                onPressed: _busy ? null : _confirm,
+                style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    minimumSize: const Size(0, 40)),
+                child: Text(tr('确定上传')),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _canvasArea(Size a) {
+    final cs = Theme.of(context).colorScheme;
+    final s = _fitS(a, false);
+    _curS = s;
+    return SizedBox(
+      key: _areaKey,
+      width: a.width,
+      height: a.height,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: _full
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: ColoredBox(color: cs.surfaceContainerHighest),
+                  )
+                : _canvas(a, s),
+          ),
+          if (!_full)
+            Positioned(
+              right: 8,
+              top: 8,
+              child: _roundBtn(Icons.fullscreen, _openFull, size: 36),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _panelBox() {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outline.withOpacity(0.6)),
+      ),
+      child: _panel(),
+    );
+  }
+
+  Widget _chipsRow() {
+    return SizedBox(
+      height: 46,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        children: [for (var i = 0; i < _toolNames.length; i++) _toolChip(i)],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return LayoutBuilder(builder: (context, cons) {
       final w = cons.maxWidth;
       final h = cons.maxHeight;
-      final pa = max(160.0, min(w - 24, (h - 52 - 8 - 8 - 44) * 0.55));
-      final s = pa * 0.8;
-      _curS = s;
-      return Column(
-        children: [
-          // 这一行的左边留给左上角的返回按钮，它始终不动
-          SizedBox(
-            height: 52,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(62, 0, 10, 0),
+      final land = w > h * 1.1;
+      if (land) {
+        final pw = min(w * 0.44, 420.0);
+        return Column(
+          children: [
+            _topRow(),
+            Expanded(
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(tr('编辑头像'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 0, 6, 10),
+                      child: LayoutBuilder(
+                          builder: (c, k) => _canvasArea(Size(k.maxWidth, k.maxHeight))),
+                    ),
                   ),
-                  IconButton(
-                    onPressed: _undo.isEmpty ? null : _doUndo,
-                    tooltip: tr('撤销'),
-                    icon: const Icon(Icons.undo),
-                  ),
-                  const SizedBox(width: 2),
-                  FilledButton(
-                    onPressed: _busy ? null : _confirm,
-                    style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        minimumSize: const Size(0, 40)),
-                    child: Text(tr('确定上传')),
+                  SizedBox(
+                    width: pw,
+                    child: Column(
+                      children: [
+                        _chipsRow(),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(4, 6, 12, 16),
+                            child: _panelBox(),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
+          ],
+        );
+      }
+      final ah = max(180.0, (h - 52 - 46 - 16) * 0.5);
+      return Column(
+        children: [
+          _topRow(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: _canvasArea(Size(w - 24, ah)),
           ),
-          const SizedBox(height: 8),
-          SizedBox(
-            key: _areaKey,
-            width: pa,
-            height: pa,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: _full
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: ColoredBox(color: cs.surfaceContainerHighest),
-                        )
-                      : _canvas(Size(pa, pa), s),
-                ),
-                if (!_full)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: _roundBtn(Icons.fullscreen, _openFull, size: 34),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 44,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              children: [for (var i = 0; i < _toolNames.length; i++) _toolChip(i)],
-            ),
-          ),
+          const SizedBox(height: 6),
+          _chipsRow(),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-              child: _panel(),
+              padding: const EdgeInsets.fromLTRB(12, 6, 12, 16),
+              child: _panelBox(),
             ),
           ),
         ],

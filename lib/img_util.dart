@@ -71,6 +71,7 @@ Future<Size?> imageNaturalSize(String path) async {
 Future<String?> pickImageChoose(BuildContext context) async {
   final choice = await showModalBottomSheet<int>(
     context: context,
+    useRootNavigator: true,
     builder: (ctx) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,

@@ -162,7 +162,7 @@ class AvatarEdit {
       }
     }
     final x = Xf(
-      scale: _f(j['z'], 1).clamp(0.05, 20.0).toDouble(),
+      scale: _f(j['z'], 1).clamp(0.05, 150.0).toDouble(),
       dx: _f(j['ox'], 0),
       dy: _f(j['oy'], 0),
       rot: _f(j['r'], 0),

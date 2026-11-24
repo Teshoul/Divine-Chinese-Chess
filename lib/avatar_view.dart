@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'avatar_model.dart';
 import 'img_util.dart';
 import 'settings.dart';
+import 'xform.dart';
 
 /// 按编辑数据实时画出头像（图片本身不被改动，所以动图照常播放）
 class AvatarView extends StatelessWidget {
@@ -13,6 +14,8 @@ class AvatarView extends StatelessWidget {
   final int? selected; // 被选中的贴图（显示选框）
   final double radiusFrac; // 圆角占边长的比例，0 = 直角
   final int cache;
+  final bool fill; // true：不是正方形，按外面给的宽高铺满（背景图用）
+  final bool clipContent; // false：不裁掉框外的部分（背景编辑器里显示框外的内容）
   const AvatarView({
     super.key,
     required this.path,
@@ -22,15 +25,17 @@ class AvatarView extends StatelessWidget {
     this.selected,
     this.radiusFrac = 0,
     this.cache = 700,
+    this.fill = false,
+    this.clipContent = true,
   });
 
-  Widget _base(double s) {
+  Widget _base(double s, double h) {
     Widget w = SizedBox(
       width: s,
-      height: s,
-      child: imageFileWidget(path, fit: BoxFit.contain, width: s, height: s, cacheWidth: cache),
+      height: h,
+      child: imageFileWidget(path, fit: BoxFit.contain, width: s, height: h, cacheWidth: cache),
     );
-    w = Transform(transform: edit.baseMatrix(s), child: w);
+    w = Transform(transform: xfMatrix(edit.xf, Size(s, h)), child: w);
     final cf = edit.colorFilter();
     if (cf != null) w = ColorFiltered(colorFilter: cf, child: w);
     return w;
@@ -91,21 +96,27 @@ class AvatarView extends StatelessWidget {
     return out;
   }
 
-  Widget _content(double s) {
+  Widget _content(double s, double h) {
     final composite = SizedBox(
       width: s,
-      height: s,
+      height: h,
       child: Stack(
-        clipBehavior: Clip.hardEdge,
+        clipBehavior: clipContent ? Clip.hardEdge : Clip.none,
         children: [
-          _base(s),
+          _base(s, h),
           if (edit.strokes.isNotEmpty)
-            Positioned.fill(child: CustomPaint(painter: StrokePainter(edit.strokes))),
+            Positioned(
+                left: 0,
+                top: 0,
+                width: s,
+                height: s,
+                child: CustomPaint(painter: StrokePainter(edit.strokes))),
           ..._items(s),
         ],
       ),
     );
-    Widget framed = RepaintBoundary(key: boundaryKey, child: ClipRect(child: composite));
+    Widget framed = RepaintBoundary(
+        key: boundaryKey, child: clipContent ? ClipRect(child: composite) : composite);
     if (radiusFrac > 0) {
       framed = ClipRRect(borderRadius: BorderRadius.circular(s * radiusFrac), child: framed);
     }
@@ -118,8 +129,8 @@ class AvatarView extends StatelessWidget {
             left: 0,
             top: 0,
             width: s,
-            height: s,
-            child: IgnorePointer(child: Opacity(opacity: 0.38, child: _base(s))),
+            height: h,
+            child: IgnorePointer(child: Opacity(opacity: 0.38, child: _base(s, h))),
           ),
         Positioned.fill(child: framed),
         if (sel != null && sel >= 0 && sel < edit.items.length)
@@ -142,9 +153,15 @@ class AvatarView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, c) {
+      if (fill) {
+        var w = c.maxWidth, h = c.maxHeight;
+        if (!w.isFinite || w <= 0) w = 100;
+        if (!h.isFinite || h <= 0) h = 100;
+        return SizedBox(width: w, height: h, child: _content(w, h));
+      }
       var s = min(c.maxWidth, c.maxHeight);
       if (!s.isFinite || s <= 0) s = 100;
-      return SizedBox(width: s, height: s, child: _content(s));
+      return SizedBox(width: s, height: s, child: _content(s, s));
     });
   }
 }

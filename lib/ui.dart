@@ -9,6 +9,7 @@ import 'settings.dart';
 import 'strings.dart';
 import 'img_util.dart';
 import 'xform.dart';
+import 'avatar_view.dart';
 import 'liquid.dart';
 import 'festival.dart';
 
@@ -432,7 +433,15 @@ class ImageSlot extends StatelessWidget {
   final String slot;
   final bool clip; // false：不裁掉屏幕外的部分（背景编辑器里用来显示框外的图）
   final bool force; // true：即使这一层被关掉也显示（编辑器里用）
-  const ImageSlot({super.key, required this.slot, this.clip = true, this.force = false});
+  final int? selected; // 编辑器里选中的贴图
+  final bool outside; // 编辑器里把框外的部分半透明显示
+  const ImageSlot(
+      {super.key,
+      required this.slot,
+      this.clip = true,
+      this.force = false,
+      this.selected,
+      this.outside = false});
 
   @override
   Widget build(BuildContext context) {
@@ -453,15 +462,26 @@ class ImageSlot extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, c) {
             final w = c.maxWidth, h = c.maxHeight;
-            Widget img = imageFileWidget(p,
-                fit: BoxFit.contain, width: w, height: h, cacheWidth: 2048);
+            Widget img = SizedBox(
+              width: w,
+              height: h,
+              child: AvatarView(
+                path: p,
+                edit: l.edit,
+                fill: true,
+                cache: 2048,
+                clipContent: clip,
+                showOutside: outside,
+                selected: selected,
+              ),
+            );
             if (l.blur > 0.1) {
               img = ImageFiltered(
                   imageFilter: ImageFilter.blur(sigmaX: l.blur, sigmaY: l.blur), child: img);
             }
             final Widget body = Opacity(
               opacity: l.opacity.clamp(0.0, 1.0).toDouble(),
-              child: Transform(transform: xfMatrix(l.xf, Size(w, h)), child: img),
+              child: img,
             );
             return clip ? ClipRect(child: body) : body;
           },
@@ -518,6 +538,7 @@ Future<int?> pickColorDialog(BuildContext context, Color init,
     Color(0xFF212121), Color(0xFF757575), Color(0xFFEEEEEE), Color(0xFFFFFFFF),
   ];
   return showDialog<int>(
+    useRootNavigator: true,
     context: context,
     barrierColor: Colors.black12,
     builder: (ctx) => StatefulBuilder(

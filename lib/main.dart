@@ -210,6 +210,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void _finishEdit(String path, AvatarEdit edit, Rect from) {
     if (_editKeep) return;
     _editKeep = true;
+    final oldSnap = app.editOf(path)?.snap;
+    if (oldSnap != null && oldSnap != edit.snap) {
+      try {
+        File(oldSnap).deleteSync();
+      } catch (_) {}
+    }
     app.touchAvatar(() {
       if (!app.avatars.contains(path)) app.avatars.add(path);
       app.setAvatarEdit(path, edit);
@@ -635,6 +641,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       : AvatarEditorPage(
                           key: ValueKey<String>(_editPath!),
                           path: _editPath!,
+                          initial: app.avatars.contains(_editPath!) ? app.editOf(_editPath!) : null,
                           onCancel: _cancelEdit,
                           onDone: _finishEdit,
                         ),
